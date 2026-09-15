@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPFS sync write overhead benchmark</title>
+<link rel="stylesheet" href="bench.css">
+</head>
+<body>
+<main>
+  <header class="card">
+    <h1>OPFS <code>FileSystemSyncAccessHandle.write()</code> per-call overhead</h1>
+    <p>
+      Separates the fixed per-call cost of synchronous OPFS writes from raw disk bandwidth, and the
+      cost of creating, opening, closing and deleting files from the cost of writing bytes. All file
+      I/O runs in a dedicated worker (<code>worker.js</code>); every pass uses a fresh file that is
+      deleted afterwards. Run the same preset in each browser on the same machine and compare the
+      summaries.
+    </p>
+  </header>
+
+  <section id="support" class="banner">Checking OPFS support in a worker…</section>
+
+  <section class="card" id="controls">
+    <h2>Configuration</h2>
+    <div class="row">
+      <span>Preset:</span>
+      <button type="button" data-preset="quick">Quick</button>
+      <button type="button" data-preset="full">Full</button>
+      <span id="preset-note" class="muted small"></span>
+    </div>
+    <div class="grid">
+      <label>N, writes per pass (workloads 1, 2, 4)
+        <input id="n" type="number" min="1" step="1"></label>
+      <label>S, bytes per write
+        <input id="s" type="number" min="1" step="1"></label>
+      <label>Chunk sizes for workload 3 (bytes, comma-separated)
+        <input id="chunks" type="text" spellcheck="false"></label>
+      <label>R, measured runs per workload (after 1 warm-up)
+        <input id="runs" type="number" min="1" step="1"></label>
+      <label>M, files for new-file (workload 5)
+        <input id="m" type="number" min="1" step="1"></label>
+    </div>
+    <fieldset class="workloads">
+      <legend>Workloads</legend>
+      <label><input type="checkbox" data-workload="small-append" checked> 1 small-append</label>
+      <label><input type="checkbox" data-workload="small-overwrite" checked> 2 small-overwrite</label>
+      <label><input type="checkbox" data-workload="chunked-append" checked> 3 chunked-append</label>
+      <label><input type="checkbox" data-workload="append-flush" checked> 4 append+flush</label>
+      <label><input type="checkbox" data-workload="new-file" checked> 5 new-file (create+open, first write, close, delete)</label>
+    </fieldset>
+    <p id="size-note" class="muted small"></p>
+    <div class="row">
+      <button id="run" type="button" class="primary" disabled>Run benchmark</button>
+      <button id="stop" type="button" disabled>Stop</button>
+      <span id="status" class="status"></span>
+    </div>
+    <progress id="progress" max="1" value="0" hidden></progress>
+  </section>
+
+  <section class="card" id="results" hidden>
+    <h2>Results</h2>
+    <p class="muted small">
+      Each row is the median run (by total time) of R measured runs after one warm-up pass.
+      Latency percentiles are per call, in microseconds. MB = 10<sup>6</sup> bytes.
+      "1st call" is call number 1 of that run; for the append workloads it is the first write into
+      the freshly created file.
+    </p>
+    <div class="table-wrap">
+      <table id="table">
+        <thead>
+          <tr>
+            <th>Workload</th>
+            <th class="num">Calls</th>
+            <th class="num">Bytes/call</th>
+            <th class="num">Total (ms)</th>
+            <th class="num">Total min–max (ms)</th>
+            <th class="num">ops/s</th>
+            <th class="num">MB/s</th>
+            <th class="num">p50 (µs)</th>
+            <th class="num">p90 (µs)</th>
+            <th class="num">p99 (µs)</th>
+            <th class="num">max (µs)</th>
+            <th class="num">1st call (µs)</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="copy-summary" type="button" class="primary">Copy Bugzilla summary</button>
+      <button id="download-json" type="button">Download JSON</button>
+      <button id="copy-json" type="button">Copy JSON</button>
+      <span id="copy-status" class="muted small"></span>
+    </div>
+    <details open>
+      <summary>Bugzilla summary (Markdown)</summary>
+      <textarea id="summary" readonly spellcheck="false"></textarea>
+    </details>
+    <details>
+      <summary>What each workload isolates</summary>
+      <ul id="isolates" class="isolates small"></ul>
+    </details>
+    <details>
+      <summary>Raw JSON</summary>
+      <pre id="json"></pre>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script type="module">
+// index.html — UI only. All OPFS work is in worker.js; this script sends the
+// configuration, renders streamed results and builds the Bugzilla summary.
+
+const PRESETS = {
+  quick: { n: 2000,  s: 4096, chunks: '65536, 1048576', runs: 3, m: 200 },
+  full:  { n: 20000, s: 4096, chunks: '65536, 1048576', runs: 5, m: 2000 },
+};
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  support: $('support'), n: $('n'), s: $('s'), chunks: $('chunks'), runs: $('runs'), m: $('m'),
+  sizeNote: $('size-note'), presetNote: $('preset-note'), run: $('run'), stop: $('stop'),
+  status: $('status'), progress: $('progress'), results: $('results'), tbody: $('tbody'),
+  summary: $('summary'), json: $('json'), log: $('log'), copyStatus: $('copy-status'),
+  isolates: $('isolates'),
+};
+
+const state = {
+  worker: null,
+  ready: false,
+  support: null,
+  running: false,
+  preset: 'full',
+  results: null,
+  startedAt: 0,
+  ticker: null,
+};
+
+// ?autorun=quick or ?autorun=full runs immediately after support detection
+// and prints the final JSON to the console (see README, "Headless runs").
+const autorun = new URLSearchParams(location.search).get('autorun');
+
+// --- formatting helpers ---------------------------------------------------
+
+const us = (ms) => (ms * 1000).toFixed(1);                 // ms -> µs string
+const ms1 = (v) => v.toFixed(1);
+const int = (v) => Math.round(v).toLocaleString('en-US');
+const fmtMB = (b) => `${(b / 1e6).toFixed(b >= 1e7 ? 0 : 1)} MB`;
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function fmtBytes(n) {
+  if (n % 1048576 === 0) return `${n / 1048576} MiB`;
+  if (n % 1024 === 0) return `${n / 1024} KiB`;
+  return `${n} B`;
+}
+
+function fmtResolution(ms) {
+  if (ms == null) return 'unknown';
+  const usv = ms * 1000;
+  return `${usv.toFixed(usv < 10 ? 1 : 0)} µs`;
+}
+
+function log(text) {
+  const stamp = new Date().toLocaleTimeString();
+  el.log.textContent += `[${stamp}] ${text}\n`;
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+// --- configuration --------------------------------------------------------
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  el.n.value = p.n; el.s.value = p.s; el.chunks.value = p.chunks; el.runs.value = p.runs; el.m.value = p.m;
+  state.preset = name;
+  updateNotes();
+}
+
+function parseChunks(text) {
+  const sizes = text.split(/[\s,]+/).map((t) => parseInt(t, 10)).filter((v) => Number.isFinite(v) && v > 0);
+  return [...new Set(sizes)].sort((a, b) => a - b);
+}
+
+function readConfig() {
+  const cfg = {
+    preset: state.preset,
+    n: parseInt(el.n.value, 10),
+    s: parseInt(el.s.value, 10),
+    chunkSizes: parseChunks(el.chunks.value),
+    runs: parseInt(el.runs.value, 10),
+    m: parseInt(el.m.value, 10),
+    workloads: [...document.querySelectorAll('input[data-workload]:checked')].map((c) => c.dataset.workload),
+  };
+  const bad = [];
+  if (!(cfg.n >= 1)) bad.push('N');
+  if (!(cfg.s >= 1)) bad.push('S');
+  if (!(cfg.runs >= 1)) bad.push('R');
+  if (!(cfg.m >= 1)) bad.push('M');
+  if (cfg.workloads.includes('chunked-append') && !cfg.chunkSizes.length) bad.push('chunk sizes');
+  if (!cfg.workloads.length) bad.push('workloads (none selected)');
+  if (bad.length) throw new Error(`Invalid configuration: ${bad.join(', ')}`);
+  return cfg;
+}
+
+function updateNotes() {
+  for (const b of document.querySelectorAll('button[data-preset]')) {
+    b.classList.toggle('active', b.dataset.preset === state.preset);
+  }
+  el.presetNote.textContent = state.preset === 'custom'
+    ? 'custom'
+    : (state.preset === 'quick'
+      ? 'quick: small N, R and M; a minute or two, mostly in workloads 4 and 5'
+      : 'full: ticket defaults, ~82 MB per pass; workload 4 (flush per write) and workload 5 (M files) can each take 10+ min (the log projects it after each warm-up)');
+  try {
+    const cfg = readConfig();
+    const total = cfg.n * cfg.s;
+    const passes = cfg.runs + 1;
+    el.sizeNote.textContent =
+      `Each append pass writes ${fmtMB(total)} to a fresh file (${passes} passes per workload including warm-up); ` +
+      `files are deleted between passes, so peak OPFS usage stays around ${fmtMB(total)}.` +
+      (total > 512 * 1024 * 1024 ? ' Warning: that is large enough to hit quota limits in some profiles.' : '');
+  } catch (err) {
+    el.sizeNote.textContent = err.message;
+  }
+}
+
+for (const input of [el.n, el.s, el.chunks, el.runs, el.m]) {
+  input.addEventListener('input', () => { state.preset = 'custom'; updateNotes(); });
+}
+for (const cb of document.querySelectorAll('input[data-workload]')) cb.addEventListener('change', updateNotes);
+for (const b of document.querySelectorAll('button[data-preset]')) {
+  b.addEventListener('click', () => applyPreset(b.dataset.preset));
+}
+
+// --- environment ----------------------------------------------------------
+
+function environment() {
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform || navigator.userAgentData?.platform || 'unknown',
+    hardwareConcurrency: navigator.hardwareConcurrency ?? null,
+    timestamp: new Date().toISOString(),
+    url: location.href,
+    crossOriginIsolated: !!self.crossOriginIsolated,
+  };
+}
+
+function browserTag(ua) {
+  let m;
+  if ((m = ua.match(/Firefox\/(\d+)/))) return `firefox${m[1]}`;
+  if ((m = ua.match(/Edg\/(\d+)/))) return `edge${m[1]}`;
+  if ((m = ua.match(/Chrome\/(\d+)/))) return `chrome${m[1]}`;
+  if ((m = ua.match(/Version\/(\d+)[^ ]* .*Safari/))) return `safari${m[1]}`;
+  return 'browser';
+}
+
+// --- worker lifecycle -----------------------------------------------------
+
+function setSupport(kind, html) {
+  el.support.className = `banner ${kind}`;
+  el.support.innerHTML = html;
+}
+
+function spawnWorker() {
+  state.ready = false;
+  el.run.disabled = true;
+  state.worker = new Worker('./worker.js', { type: 'module' });
+  state.worker.onmessage = (e) => onWorkerMessage(e.data);
+  state.worker.onerror = (e) => {
+    setSupport('err', `Worker failed to load: ${esc(e.message || 'unknown error')}. ` +
+      'Serve this directory over http://localhost (a secure context) with a server that sends JavaScript as text/javascript.');
+    log(`Worker error: ${e.message}`);
+  };
+  state.worker.postMessage({ type: 'init' });
+}
+
+function onWorkerMessage(msg) {
+  switch (msg.type) {
+    case 'ready': {
+      state.support = msg.support;
+      if (!msg.support.ok) {
+        setSupport('err', `<strong>OPFS sync access handles are not usable here.</strong> ${esc(msg.support.reason)}`);
+        log(`Unsupported: ${msg.support.reason}`);
+        if (autorun) console.log('OPFS_BENCH_ERROR ' + JSON.stringify({ support: msg.support }));
+        return;
+      }
+      const res = fmtResolution(msg.support.timerResolutionMs);
+      const coarse = msg.support.timerResolutionMs >= 0.05;
+      setSupport(coarse ? 'warn' : 'ok',
+        `<strong>OPFS sync access handles available.</strong> Worker performance.now() resolution: ${res}` +
+        ` (crossOriginIsolated: ${msg.support.crossOriginIsolated}).` +
+        (coarse ? ' Per-call percentiles will be quantised to that step; totals, ops/s and MB/s are unaffected. ' +
+          'For finer percentiles serve with <code>python3 serve.py</code> (adds COOP/COEP) or, in Firefox, set ' +
+          '<code>privacy.reduceTimerPrecision</code> to false in about:config.' : '') +
+        (msg.support.estimate ? ` Storage estimate: ${fmtMB(msg.support.estimate.usage)} used of ${fmtMB(msg.support.estimate.quota)}.` : ''));
+      log(`Ready. Timer resolution ${res}; leftover files removed: ${msg.support.removedLeftovers}.`);
+      state.ready = true;
+      el.run.disabled = false;
+      if (autorun && PRESETS[autorun]) {
+        applyPreset(autorun);
+        start();
+      }
+      break;
+    }
+    case 'log':
+      log(msg.text);
+      break;
+    case 'progress': {
+      const phase = msg.phase === 'warmup' ? 'warm-up' : `run ${msg.run}/${msg.runs}`;
+      state.progressText = `${msg.label}: ${phase} (workload ${msg.jobIndex + 1}/${msg.jobCount})`;
+      const passes = msg.runs + 1;
+      const passIndex = msg.phase === 'warmup' ? 0 : msg.run;
+      el.progress.value = (msg.jobIndex + passIndex / passes) / msg.jobCount;
+      renderStatus();
+      break;
+    }
+    case 'result':
+      state.results.workloads.push(msg.result);
+      renderRow(msg.result);
+      renderOutputs();
+      log(`${msg.result.label}: median total ${ms1(msg.result.median.totalMs)} ms, ` +
+        `${int(msg.result.median.opsPerSec)} ops/s, p50 ${us(msg.result.median.p50Ms)} µs`);
+      break;
+    case 'done':
+      finish(null);
+      break;
+    case 'error':
+      finish(msg.error);
+      break;
+  }
+}
+
+// --- running ---------------------------------------------------------------
+
+function start() {
+  if (!state.ready || state.running) return;
+  let config;
+  try {
+    config = readConfig();
+  } catch (err) {
+    el.status.textContent = err.message;
+    el.status.classList.add('err');
+    return;
+  }
+  state.running = true;
+  state.results = {
+    benchmark: 'opfs-sync-write-overhead',
+    version: 1,
+    env: environment(),
+    support: state.support,
+    config,
+    workloads: [],
+    finishedAt: null,
+    durationMs: null,
+  };
+  state.startedAt = performance.now();
+  state.progressText = 'starting…';
+  el.tbody.innerHTML = '';
+  el.isolates.innerHTML = '';
+  el.results.hidden = false;
+  el.summary.value = '';
+  el.json.textContent = '';
+  el.copyStatus.textContent = '';
+  el.run.disabled = true;
+  el.stop.disabled = false;
+  el.progress.hidden = false;
+  el.progress.value = 0;
+  el.status.classList.remove('err');
+  log(`Starting: ${JSON.stringify(config)}`);
+  state.worker.postMessage({ type: 'run', config });
+  state.ticker = setInterval(renderStatus, 250);
+}
+
+function renderStatus() {
+  if (!state.running) return;
+  const elapsed = ((performance.now() - state.startedAt) / 1000).toFixed(1);
+  el.status.textContent = `Running ${state.progressText} · ${elapsed} s elapsed`;
+}
+
+function finish(error) {
+  clearInterval(state.ticker);
+  state.running = false;
+  el.run.disabled = false;
+  el.stop.disabled = true;
+  el.progress.hidden = true;
+  const seconds = ((performance.now() - state.startedAt) / 1000).toFixed(1);
+  if (state.results) {
+    state.results.finishedAt = new Date().toISOString();
+    state.results.durationMs = performance.now() - state.startedAt;
+    state.results.error = error || null;
+    renderOutputs();
+  }
+  if (error) {
+    const where = error.jobId ? ` during ${error.jobId}` : '';
+    let text = `${error.name}${where}: ${error.message}`;
+    if (error.quotaExceeded) {
+      const cfg = state.results?.config;
+      text += ` — the origin ran out of OPFS quota. Reduce N or S (each append pass writes ${cfg ? fmtMB(cfg.n * cfg.s) : 'N×S bytes'}) or free space for this origin.`;
+    }
+    el.status.textContent = text;
+    el.status.classList.add('err');
+    log(`Error: ${text}`);
+    if (error.stack) log(error.stack);
+    if (autorun) console.log('OPFS_BENCH_ERROR ' + JSON.stringify(error));
+  } else {
+    el.status.textContent = `Done in ${seconds} s.`;
+    log(`Done in ${seconds} s.`);
+    if (autorun) console.log('OPFS_BENCH_JSON ' + JSON.stringify(state.results));
+  }
+}
+
+function stop() {
+  if (!state.running) return;
+  clearInterval(state.ticker);
+  state.running = false;
+  state.worker.terminate();
+  el.status.textContent = 'Stopped: worker terminated; leftover files are removed on restart.';
+  el.stop.disabled = true;
+  el.progress.hidden = true;
+  log('Stopped by user; restarting worker.');
+  spawnWorker();
+}
+
+el.run.addEventListener('click', start);
+el.stop.addEventListener('click', stop);
+
+// --- rendering --------------------------------------------------------------
+
+function renderRow(w) {
+  const m = w.median;
+  const tr = document.createElement('tr');
+  tr.title = w.isolates;
+  tr.innerHTML = `
+    <td><div class="wl">${esc(w.label)}</div><div class="muted small">${esc(w.description)}</div></td>
+    <td class="num">${int(m.calls)}</td>
+    <td class="num">${w.params.bytesPerCall ? int(w.params.bytesPerCall) : '–'}</td>
+    <td class="num">${ms1(m.totalMs)}</td>
+    <td class="num">${ms1(w.totalMsMin)}–${ms1(w.totalMsMax)}</td>
+    <td class="num">${int(m.opsPerSec)}</td>
+    <td class="num">${m.bytes ? m.mbPerSec.toFixed(1) : '–'}</td>
+    <td class="num">${us(m.p50Ms)}</td>
+    <td class="num">${us(m.p90Ms)}</td>
+    <td class="num">${us(m.p99Ms)}</td>
+    <td class="num">${us(m.maxMs)}</td>
+    <td class="num">${us(m.firstCallMs)}</td>`;
+  el.tbody.appendChild(tr);
+  const li = document.createElement('li');
+  li.innerHTML = `<strong>${esc(w.label)}</strong>: ${esc(w.isolates)}`;
+  el.isolates.appendChild(li);
+}
+
+function renderOutputs() {
+  if (!state.results) return;
+  el.summary.value = bugzillaSummary(state.results);
+  el.json.textContent = JSON.stringify(state.results, null, 2);
+}
+
+// Lines that turn the raw table into the comparisons the ticket needs.
+function derivedLines(r) {
+  const by = Object.fromEntries(r.workloads.map((w) => [w.id, w]));
+  const ap = by['small-append'], ow = by['small-overwrite'], af = by['append-flush'];
+  const chunked = r.workloads.filter((w) => w.kind === 'chunked-append');
+  const lines = [];
+  if (ow) lines.push(`- Fixed per-call floor (small-overwrite, size never changes): ${us(ow.median.meanMs)} µs/call mean, ${us(ow.median.p50Ms)} µs p50`);
+  if (ap) lines.push(`- Size-growing write (small-append): ${us(ap.median.meanMs)} µs/call mean, ${us(ap.median.p50Ms)} µs p50`);
+  if (ap && ow) lines.push(`- Extra cost per call when the write grows the file (append − overwrite): ${us(ap.median.meanMs - ow.median.meanMs)} µs mean, ${us(ap.median.p50Ms - ow.median.p50Ms)} µs p50`);
+  for (const c of chunked) {
+    if (!ap) break;
+    const ratio = (ap.median.totalMs / c.median.totalMs).toFixed(1);
+    lines.push(`- Same ${fmtMB(ap.params.totalBytes)} in ${int(c.median.calls)} × ${fmtBytes(c.params.bytesPerCall)} calls: ` +
+      `${ms1(c.median.totalMs)} ms (${c.median.mbPerSec.toFixed(0)} MB/s) vs ${ms1(ap.median.totalMs)} ms for ` +
+      `${int(ap.median.calls)} × ${fmtBytes(ap.params.bytesPerCall)}; the small calls are ${ratio}× slower for the same bytes`);
+  }
+  if (af && ap) lines.push(`- flush() after every write adds ${us(af.median.meanMs - ap.median.meanMs)} µs/call on top of small-append (append+flush: ${us(af.median.meanMs)} µs/call mean)`);
+  // Call number 1 of every append workload is the first write into a file that has never been written.
+  for (const w of [ap, ...chunked, af].filter(Boolean)) {
+    const m = w.median;
+    const far = m.firstCallMs >= 3 * m.p99Ms ? ' (far above p99)' : '';
+    lines.push(`- ${w.label}: first call into the fresh file ${us(m.firstCallMs)} µs vs p50 ${us(m.p50Ms)} / p99 ${us(m.p99Ms)} µs; across runs ${us(w.firstCallMsMin)}–${us(w.firstCallMsMax)} µs${far}`);
+  }
+  // new-file: per-file cost split by step.
+  const nf = { open: by['new-file-open'], write: by['new-file-write'], close: by['new-file-close'], del: by['new-file-delete'], cycle: by['new-file-cycle'] };
+  if (nf.cycle) {
+    const per = (w) => (w ? ms1(w.median.meanMs) : '?');
+    lines.push(`- new-file: ${per(nf.cycle)} ms per file (${int(nf.cycle.median.opsPerSec)} files/s) = create+open ${per(nf.open)} + first write ${per(nf.write)} + close ${per(nf.close)} + delete ${per(nf.del)} ms`);
+    if (nf.open && nf.write && nf.close) {
+      lines.push(`- new-file without delete (what populating OPFS pays per file): ${ms1(nf.open.median.meanMs + nf.write.median.meanMs + nf.close.median.meanMs)} ms`);
+    }
+    if (nf.write && ap) {
+      lines.push(`- First write into a new file (${fmtBytes(nf.write.params.bytesPerCall)}): ${us(nf.write.median.meanMs)} µs vs ${us(ap.median.meanMs)} µs per small-append call`);
+    }
+  }
+  return lines;
+}
+
+function bugzillaSummary(r) {
+  const { env, support, config } = r;
+  const out = [];
+  out.push('**OPFS `FileSystemSyncAccessHandle.write()` per-call overhead benchmark**');
+  out.push('');
+  out.push('Environment:');
+  out.push(`- User agent: \`${env.userAgent}\``);
+  out.push(`- Platform: ${env.platform}; hardwareConcurrency: ${env.hardwareConcurrency}`);
+  out.push(`- Timestamp: ${env.timestamp}`);
+  out.push(`- performance.now() resolution in the worker: ${fmtResolution(support.timerResolutionMs)} (crossOriginIsolated: ${support.crossOriginIsolated})`);
+  if (support.estimate) out.push(`- navigator.storage.estimate(): ${fmtMB(support.estimate.usage)} used of ${fmtMB(support.estimate.quota)}`);
+  out.push(`- Config: preset=${config.preset}, N=${config.n}, S=${config.s} B, chunks=${config.chunkSizes.map(fmtBytes).join(' / ')}, R=${config.runs}, M=${config.m}`);
+  out.push('');
+  out.push(`Median run of R=${config.runs} (by total time) after one warm-up pass; latency percentiles are per call; "1st call" is call number 1 of that run (for the append workloads, the first write into the freshly created file):`);
+  out.push('');
+  out.push('| Workload | Calls | Bytes/call | Total (ms) | Total min–max (ms) | ops/s | MB/s | p50 (µs) | p90 (µs) | p99 (µs) | max (µs) | 1st call (µs) |');
+  out.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  for (const w of r.workloads) {
+    const m = w.median;
+    out.push(`| ${w.label} | ${int(m.calls)} | ${w.params.bytesPerCall ? int(w.params.bytesPerCall) : '–'} | ${ms1(m.totalMs)} | ${ms1(w.totalMsMin)}–${ms1(w.totalMsMax)} | ${int(m.opsPerSec)} | ${m.bytes ? m.mbPerSec.toFixed(1) : '–'} | ${us(m.p50Ms)} | ${us(m.p90Ms)} | ${us(m.p99Ms)} | ${us(m.maxMs)} | ${us(m.firstCallMs)} |`);
+  }
+  const d = derivedLines(r);
+  if (d.length) {
+    out.push('');
+    out.push('Derived:');
+    out.push(...d);
+  }
+  if (r.error) {
+    out.push('');
+    out.push(`Run ended with ${r.error.name}${r.error.jobId ? ` during ${r.error.jobId}` : ''}: ${r.error.message}`);
+  }
+  if (support.timerResolutionMs >= 0.05) {
+    out.push('');
+    out.push(`Note: performance.now() resolution was ${fmtResolution(support.timerResolutionMs)}, so per-call percentiles are quantised to that step; totals, ops/s and MB/s are measured over the whole loop and unaffected.`);
+  }
+  return out.join('\n');
+}
+
+// --- clipboard / download ---------------------------------------------------
+
+async function copyText(text, label, fallbackEl) {
+  try {
+    await navigator.clipboard.writeText(text);
+    el.copyStatus.textContent = `${label} copied to clipboard.`;
+  } catch (err) {
+    if (fallbackEl) { fallbackEl.closest('details').open = true; fallbackEl.focus(); fallbackEl.select(); }
+    el.copyStatus.textContent = `Clipboard unavailable (${err.name}); the text is selected below, press Ctrl/Cmd+C.`;
+  }
+}
+
+$('copy-summary').addEventListener('click', () => {
+  if (!state.results) return;
+  copyText(bugzillaSummary(state.results), 'Bugzilla summary', el.summary);
+});
+$('copy-json').addEventListener('click', () => {
+  if (!state.results) return;
+  copyText(JSON.stringify(state.results, null, 2), 'JSON', null);
+});
+$('download-json').addEventListener('click', () => {
+  if (!state.results) return;
+  const blob = new Blob([JSON.stringify(state.results, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = state.results.env.timestamp.replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `opfs-bench-${browserTag(navigator.userAgent)}-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  el.copyStatus.textContent = `Saved ${a.download}.`;
+});
+
+// --- boot -----------------------------------------------------------------------
+
+applyPreset(PRESETS[autorun] ? autorun : 'full');
+
+if (!self.isSecureContext) {
+  setSupport('err', 'This page is not in a secure context. OPFS requires https:// or http://localhost; ' +
+    'run <code>python3 -m http.server</code> in this directory and open http://localhost:8000/.');
+} else if (typeof Worker === 'undefined') {
+  setSupport('err', 'Web Workers are not available; createSyncAccessHandle() only exists in dedicated workers.');
+} else {
+  spawnWorker();
+}
+</script>
+</body>
+</html>
