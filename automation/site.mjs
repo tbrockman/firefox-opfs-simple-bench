@@ -4,8 +4,10 @@
 //   node site.mjs [results-dir] [out-dir]     defaults: ../results  ../_site
 //
 // Output:
-//   index.html        the newest run's report.html (runs sort by directory
-//                     name, which starts with the run's local timestamp)
+//   index.html        the newest clean run's report.html (runs sort by
+//                     directory name, which starts with the run's local
+//                     timestamp; runs traced with strace carry inflated
+//                     timings and are listed but never used as the front page)
 //   runs/<run>/       every run directory as committed (report.html,
 //                     summary.md, per-browser JSON, logs)
 //   runs/index.html   list of runs, newest first
@@ -34,6 +36,11 @@ async function listRuns() {
     try { await fs.access(path.join(dir, 'report.html')); } catch { continue; }
     let browsers = [];
     let date = '';
+    let traced = false;
+    try {
+      const html = await fs.readFile(path.join(dir, 'report.html'), 'utf8');
+      traced = /name="opfs-bench-traced" content="true"/.test(html);
+    } catch {}
     try {
       const run = JSON.parse(await fs.readFile(path.join(dir, 'run.json'), 'utf8'));
       browsers = (run.records || []).map((r) => `${r.browser}${r.ok ? '' : ' (failed)'}`);
@@ -46,7 +53,7 @@ async function listRuns() {
         } catch {}
       }
     }
-    runs.push({ name: e.name, dir, browsers, date });
+    runs.push({ name: e.name, dir, browsers, date, traced });
   }
   runs.sort((a, b) => b.name.localeCompare(a.name));
   return runs;
@@ -86,13 +93,13 @@ async function main() {
 
   const items = runs.map((r) =>
     `<li><a href="${esc(r.name)}/report.html">${esc(r.name)}</a>` +
-    ` <span class="muted">${esc(r.browsers.join(', ') || '')}${r.date ? ` · ${esc(r.date)}` : ''}</span>` +
+    ` <span class="muted">${esc(r.browsers.join(', ') || '')}${r.date ? ` · ${esc(r.date)}` : ''}${r.traced ? ' · traced with strace (timings inflated)' : ''}</span>` +
     ` · <a href="${esc(r.name)}/summary.md">summary.md</a></li>`).join('\n');
   await fs.writeFile(path.join(outDir, 'runs', 'index.html'), shell('OPFS benchmark runs',
     `<h1>OPFS sync write benchmark: all runs</h1>\n<p><a href="../">Latest report</a></p>\n<ul>\n${items || '<li class="muted">No runs committed yet.</li>'}\n</ul>`));
 
   if (runs.length) {
-    const latest = runs[0];
+    const latest = runs.find((r) => !r.traced) || runs[0];
     const report = await fs.readFile(path.join(latest.dir, 'report.html'), 'utf8');
     const nav = `<p class="sub">Run <code>${esc(latest.name)}</code> · <a href="runs/${esc(latest.name)}/summary.md">summary.md</a> · <a href="runs/">all runs</a></p>\n`;
     // The report is standalone; add one line so the page says which run it is.
@@ -101,7 +108,8 @@ async function main() {
     await fs.writeFile(path.join(outDir, 'index.html'), shell('OPFS benchmark',
       '<h1>OPFS sync write benchmark</h1>\n<p class="muted">No results have been committed yet. Run <code>node automation/run.mjs</code>, commit the <code>results/&lt;run&gt;/</code> directory and push.</p>'));
   }
-  console.log(`${runs.length} run(s) → ${outDir}${runs.length ? ` (latest: ${runs[0].name})` : ''}`);
+  const front = runs.find((r) => !r.traced) || runs[0];
+  console.log(`${runs.length} run(s) → ${outDir}${front ? ` (front page: ${front.name})` : ''}`);
 }
 
 main().catch((err) => {

@@ -459,6 +459,9 @@ async function runAll(config) {
       runs: config.runs, jobIndex, jobCount: jobs.length,
     });
 
+    // Wall-clock window of the whole job (warm-up + runs), so an external
+    // tracer's timestamps can be attributed to this workload.
+    const startedEpochMs = Date.now();
     progress('warmup', 0);
     const warmup = await runPass(job, 'warmup', scratch);
     // flush() and file creation can cost milliseconds per call; tell the user
@@ -474,10 +477,11 @@ async function runAll(config) {
       runs.push(await runPass(job, `run${r}`, scratch));
     }
 
+    const window = { startedEpochMs, finishedEpochMs: Date.now() };
     for (let k = 0; k < warmup.length; k++) {
       self.postMessage({
         type: 'result',
-        result: summarizeSeries(job, warmup[k], runs.map((pass) => pass[k])),
+        result: summarizeSeries(job, warmup[k], runs.map((pass) => pass[k]), config.runs + 1, window),
       });
     }
   }
@@ -490,8 +494,11 @@ async function runAll(config) {
 async function runPass(job, passName, scratch) {
   const kind = KINDS[job.kind];
   let series;
+  let window;  // wall-clock bounds of the timed region, for external tracers
   if (kind.ownFiles) {
+    window = { startedEpochMs: Date.now() };
     series = await kind.run(job, scratch.phases, passName);
+    window.finishedEpochMs = Date.now();
   } else {
     const name = `${FILE_PREFIX}${job.id}-${passName}.bin`;
     await root.removeEntry(name).catch(() => {});
@@ -499,7 +506,9 @@ async function runPass(job, passName, scratch) {
     try {
       const handle = await fileHandle.createSyncAccessHandle();
       try {
+        window = { startedEpochMs: Date.now() };
         series = [{ ...kind.run(handle, job, scratch.main), latencies: scratch.main }];
+        window.finishedEpochMs = Date.now();
       } finally {
         handle.close();
       }
@@ -515,7 +524,7 @@ async function runPass(job, passName, scratch) {
       isolates: s.isolates || kind.isolates,
       bytesPerCall: s.bytesPerCall ?? job.bytesPerCall,
     },
-    stats: stats(s),
+    stats: { ...stats(s), window },
   }));
 }
 
@@ -545,7 +554,7 @@ function stats({ calls, bytes, totalMs, latencies }) {
 
 // The reported "median run" is the actual run with the median total time
 // (lower-middle for an even R), not an average of runs.
-function summarizeSeries(job, warmup, runs) {
+function summarizeSeries(job, warmup, runs, passes, window) {
   const meta = warmup.meta;
   const runStats = runs.map((r) => r.stats);
   const order = runStats.map((_, i) => i).sort((a, b) => runStats[a].totalMs - runStats[b].totalMs);
@@ -553,7 +562,10 @@ function summarizeSeries(job, warmup, runs) {
   const firstCalls = runStats.map((r) => r.firstCallMs);
   return {
     id: meta.id,
+    jobId: job.id,
     kind: job.kind,
+    passes,
+    window,
     label: meta.label,
     description: meta.description,
     isolates: meta.isolates,

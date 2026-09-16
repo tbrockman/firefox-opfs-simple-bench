@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // automation/report.mjs — turn the per-browser JSON files in a run directory
 // into summary.md (Markdown, ready for a ticket) and report.html (standalone,
-// no dependencies: a comparison chart, the table behind it, environment
-// details and each browser's Bugzilla summary).
+// no dependencies).
 //
 //   node report.mjs <run-dir>        rebuild the report for an existing run
 //
+// The report is grouped into two sections that map onto the two separate
+// findings a run supports: per-call write cost (workloads 1–4) and per-file
+// cost (workload 5). When the run was traced with --strace-fsync, a third
+// section shows durability syscalls per call and which files were synced.
 // run.mjs calls buildReport() itself after the browsers have finished.
 
 import fs from 'node:fs/promises';
@@ -13,6 +16,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const BROWSER_ORDER = ['chrome', 'firefox', 'safari'];
+
+const SECTIONS = [
+  {
+    key: 'writes',
+    title: 'Per-call write cost',
+    blurb: 'Workloads 1–4. small-overwrite is the fixed per-call floor; small-append adds the cost of growing the file; ' +
+      'chunked-append writes the same bytes in far fewer calls; append+flush is a control, since both browsers flush per call.',
+    kinds: ['small-append', 'small-overwrite', 'chunked-append', 'append-flush'],
+  },
+  {
+    key: 'files',
+    title: 'Per-file cost',
+    blurb: 'Workload 5. Each step of create+open, first write, close and delete timed on its own, per file, plus the full cycle. ' +
+      'Populating a file system pays the first three per file.',
+    kinds: ['new-file'],
+  },
+];
 
 // Fixed colour per browser (categorical slots 1–4 of the reference palette,
 // validated for light and dark surfaces). A browser keeps its colour no matter
@@ -26,6 +46,7 @@ const SERIES = {
 
 export async function buildReport(dir) {
   const runs = await loadRuns(dir);
+  if (!runs.length) throw new Error(`no per-browser JSON files in ${dir}; refusing to overwrite its summary.md and report.html`);
   const okRuns = runs.filter((r) => r.data.workloads?.length);
   const rows = collectRows(okRuns);
   const md = renderMarkdown(dir, runs, okRuns, rows);
@@ -69,12 +90,32 @@ function collectRows(okRuns) {
   const rows = new Map();
   for (const run of okRuns) {
     for (const w of run.data.workloads) {
-      if (!rows.has(w.id)) rows.set(w.id, { id: w.id, label: w.label, description: w.description, isolates: w.isolates, by: {} });
+      if (!rows.has(w.id)) {
+        rows.set(w.id, { id: w.id, jobId: w.jobId || w.id, kind: w.kind, label: w.label, description: w.description, isolates: w.isolates, by: {} });
+      }
       rows.get(w.id).by[run.name] = w;
     }
   }
   return [...rows.values()];
 }
+
+const sectionRows = (rows, section) => rows.filter((r) => section.kinds.includes(r.kind));
+
+// Jobs (one per workload as run; new-file's five rows share one job) with
+// their strace accounting per browser, for the fsync section.
+function collectJobs(okRuns, rows) {
+  const jobs = new Map();
+  for (const row of rows) {
+    if (!jobs.has(row.jobId)) jobs.set(row.jobId, { id: row.jobId, label: row.jobId === row.id ? row.label : row.jobId, by: {} });
+    for (const run of okRuns) {
+      const s = run.data.automation?.strace?.byJob?.[row.jobId];
+      if (s) jobs.get(row.jobId).by[run.name] = s;
+    }
+  }
+  return [...jobs.values()];
+}
+
+const tracedRuns = (okRuns) => okRuns.filter((r) => r.data.automation?.strace);
 
 // --- formatting ------------------------------------------------------------------
 
@@ -82,6 +123,7 @@ const usOf = (w) => w.median.meanMs * 1000;
 const fmtUs = (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)} ms` : v >= 100 ? `${v.toFixed(0)} µs` : `${v.toFixed(1)} µs`);
 const fmtMs = (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${v.toFixed(1)} ms`);
 const fmtRatio = (v) => (v >= 100 ? `${v.toFixed(0)}×` : `${v.toFixed(1)}×`);
+const fmtPerCall = (v) => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2));
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function configText(data) {
@@ -97,7 +139,62 @@ function hostText(runs) {
   return `${h.cpu} (${h.cores} threads), ${h.memoryGB} GB, ${h.platform} ${h.release} ${h.arch}`;
 }
 
+const runLabel = (r) => `${r.label}${r.data.automation?.headless === false ? ' (headed)' : ''}`;
+
+const fsText = (fsInfo) => (fsInfo ? `${fsInfo.type} (${fsInfo.mountPoint})` : 'unknown');
+
+// "Profiles on: ext4 (/)" or, when browsers differed, one entry per browser.
+function profilesText(runs) {
+  const entries = runs.map((r) => [r.label, fsText(r.data.automation?.profileFilesystem)]);
+  if (!entries.length) return '';
+  const distinct = [...new Set(entries.map((e) => e[1]))];
+  return distinct.length === 1 ? distinct[0] : entries.map(([l, f]) => `${l}: ${f}`).join('; ');
+}
+
 // --- Markdown ----------------------------------------------------------------------
+
+function comparisonTable(okRuns, rows) {
+  const base = okRuns[0];
+  const others = okRuns.slice(1);
+  const header = ['Workload', ...okRuns.map((r) => `${r.label} µs/call`), ...others.map((r) => `${r.label} ÷ ${base.label}`), ...okRuns.map((r) => `${r.label} total`)];
+  const lines = [`| ${header.join(' | ')} |`, `|---|${header.slice(1).map(() => '---:').join('|')}|`];
+  for (const row of rows) {
+    const cells = [row.label];
+    for (const r of okRuns) cells.push(row.by[r.name] ? fmtUs(usOf(row.by[r.name])) : '–');
+    for (const r of others) cells.push(row.by[r.name] && row.by[base.name] ? fmtRatio(usOf(row.by[r.name]) / usOf(row.by[base.name])) : '–');
+    for (const r of okRuns) cells.push(row.by[r.name] ? fmtMs(row.by[r.name].median.totalMs) : '–');
+    lines.push(`| ${cells.join(' | ')} |`);
+  }
+  return lines.join('\n');
+}
+
+function fsyncMarkdown(okRuns, rows) {
+  const traced = tracedRuns(okRuns);
+  if (!traced.length) return [];
+  const jobs = collectJobs(traced, rows);
+  const out = ['## Durability syscalls per call (strace)', ''];
+  out.push(`Counted with strace (${esc(traced[0].data.automation.strace.syscalls)}), attributed to workloads by wall-clock window; "per call" divides by calls × passes (warm-up included).`, '');
+  const header = ['Workload', ...traced.flatMap((r) => [`${r.label} syncs/call`, `${r.label} ms in sync/call`, `${r.label} outside loop, per pass`])];
+  out.push(`| ${header.join(' | ')} |`, `|---|${header.slice(1).map(() => '---:').join('|')}|`);
+  for (const job of jobs) {
+    const cells = [job.label];
+    for (const r of traced) {
+      const s = job.by[r.name];
+      cells.push(s ? fmtPerCall(s.perCall) : '–', s ? (s.secondsPerCall * 1000).toFixed(2) : '–', s?.betweenPasses ? fmtPerCall(s.betweenPasses.perPass) : '–');
+    }
+    out.push(`| ${cells.join(' | ')} |`);
+  }
+  out.push('', '"Outside the loop" is the per-pass file creation and deletion that workloads 1–4 do around their timed loop; new-file times those steps inside the loop.');
+  out.push('');
+  for (const r of traced) {
+    const st = r.data.automation.strace;
+    out.push(`${r.label}: ${st.total.count} calls, ${st.total.seconds.toFixed(1)} s inside them` +
+      (st.outsideWorkloads?.count ? `, ${st.outsideWorkloads.count} outside any workload` : '') + `. Most-synced files:`);
+    for (const p of st.byPath.slice(0, 8)) out.push(`- \`${p.path}\`: ${p.count} calls, ${p.seconds.toFixed(2)} s`);
+    out.push('');
+  }
+  return out;
+}
 
 function renderMarkdown(dir, runs, okRuns, rows) {
   const out = [];
@@ -106,46 +203,59 @@ function renderMarkdown(dir, runs, okRuns, rows) {
   const host = hostText(runs);
   if (host) out.push(`Host: ${host}  `);
   if (okRuns[0]) out.push(`Config: ${configText(okRuns[0].data)}  `);
-  out.push(`Browsers: ${runs.map((r) => `${r.label}${r.data.automation?.headless === false ? ' (headed)' : ''}`).join(', ')}  `);
+  out.push(`Browsers: ${runs.map(runLabel).join(', ')}  `);
+  if (runs.some((r) => r.data.automation?.profileFilesystem !== undefined)) out.push(`Profiles on: ${profilesText(runs)}  `);
+  if (tracedRuns(okRuns).length) out.push('Traced with strace: fsync counts below; ptrace overhead applies to those calls only.  ');
   out.push(`Date: ${when}`, '');
 
-  let table = '';
+  const tables = [];
   if (okRuns.length) {
-    const base = okRuns[0];
-    const others = okRuns.slice(1);
-    const header = ['Workload', ...okRuns.map((r) => `${r.label} µs/call`), ...others.map((r) => `${r.label} ÷ ${base.label}`), ...okRuns.map((r) => `${r.label} total`)];
-    const lines = [`| ${header.join(' | ')} |`, `|---|${header.slice(1).map(() => '---:').join('|')}|`];
-    for (const row of rows) {
-      const cells = [row.label];
-      for (const r of okRuns) cells.push(row.by[r.name] ? fmtUs(usOf(row.by[r.name])) : '–');
-      for (const r of others) cells.push(row.by[r.name] && row.by[base.name] ? fmtRatio(usOf(row.by[r.name]) / usOf(row.by[base.name])) : '–');
-      for (const r of okRuns) cells.push(row.by[r.name] ? fmtMs(row.by[r.name].median.totalMs) : '–');
-      lines.push(`| ${cells.join(' | ')} |`);
+    for (const section of SECTIONS) {
+      const sr = sectionRows(rows, section);
+      if (!sr.length) continue;
+      const table = comparisonTable(okRuns, sr);
+      tables.push(`${section.title}\n${table}`);
+      out.push(`## ${section.title} (median run, mean time per call)`, '', table, '');
     }
-    table = lines.join('\n');
-    out.push('## Comparison (median run, mean time per call)', '', table, '');
+    out.push(...fsyncMarkdown(okRuns, rows));
   }
   for (const r of runs) {
     out.push(`## ${r.label}`, '');
     if (r.summary) out.push(r.summary.trim(), '');
     else out.push(`Did not complete: ${r.data.error?.message || r.data.support?.reason || 'unknown error'}`, '');
   }
-  return { text: `${out.join('\n')}\n`, table };
+  return { text: `${out.join('\n')}\n`, table: tables.join('\n\n') };
 }
 
 // --- HTML ------------------------------------------------------------------------------
 
 function renderHtml(runs, okRuns, rows) {
-  const title = `OPFS sync write benchmark`;
+  const title = 'OPFS sync write benchmark';
   const when = runs[0]?.data.env?.timestamp || '';
-  const chart = okRuns.length ? renderChart(okRuns, rows) : '<p class="muted">No completed runs to chart.</p>';
   const seriesCss = (mode) => Object.entries(SERIES).map(([k, v]) => `--series-${k}: ${v[mode]};`).join(' ');
+  const legend = `<div class="legend">${okRuns.map((r) => `<span style="--swatch: var(--series-${seriesKey(r.name)})">${esc(runLabel(r))}</span>`).join('')}</div>`;
+  const sections = okRuns.length
+    ? SECTIONS.map((section) => {
+      const sr = sectionRows(rows, section);
+      if (!sr.length) return '';
+      return `
+  <section class="card">
+    <h2>${esc(section.title)}</h2>
+    <p class="muted">${esc(section.blurb)} Mean time per call in the median run, log scale; the distance between the marks is the ratio between browsers, printed on the right. Hover a mark for p50 and p99.</p>
+    ${legend}
+    <div class="chart-wrap">${renderChart(okRuns, sr)}</div>
+    <div class="table-wrap">${renderTable(okRuns, sr)}</div>
+  </section>`;
+    }).join('\n')
+    : '<section class="card"><p class="muted">No completed runs.</p></section>';
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} ${esc(when.slice(0, 10))}</title>
+<meta name="opfs-bench-traced" content="${tracedRuns(okRuns).length ? 'true' : 'false'}">
 <style>
 :root {
   color-scheme: light dark;
@@ -164,7 +274,7 @@ function renderHtml(runs, okRuns, rows) {
 body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
-h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
 p { margin: 0 0 8px; }
 .muted { color: var(--muted); }
 .sub { color: var(--ink-2); }
@@ -181,13 +291,15 @@ svg .link { stroke: var(--axis); stroke-width: 2; stroke-linecap: round; }
 svg .dot { stroke: var(--surface); stroke-width: 2; }
 svg .hit { fill: transparent; }
 svg .hit:hover + .dot, svg .dot:hover { r: 7; }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
 table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
 th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }
 th { color: var(--ink-2); font-weight: 600; white-space: nowrap; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.wl { font-weight: 600; }
 td .desc { color: var(--muted); font-size: 0.88em; font-weight: 400; }
+ul.paths { margin: 4px 0 10px; padding-left: 18px; }
+ul.paths li { margin: 2px 0; }
 details { margin: 8px 0; }
 summary { cursor: pointer; color: var(--ink-2); }
 pre { background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; font-size: 0.85em; white-space: pre-wrap; }
@@ -198,22 +310,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 <main>
   <h1>${esc(title)}</h1>
   <p class="sub">${esc(when)} · ${esc(hostText(runs))}</p>
-  ${okRuns[0] ? `<p class="sub">Config: ${esc(configText(okRuns[0].data))}</p>` : ''}
-
+  ${okRuns[0] ? `<p class="sub">Config: ${esc(configText(okRuns[0].data))}${runs.some((r) => r.data.automation?.profileFilesystem !== undefined) ? ` · Profiles on: ${esc(profilesText(runs))}` : ''}</p>` : ''}
+  ${tracedRuns(okRuns).length ? '<p class="sub">Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.</p>' : ''}
+${sections}
+${renderFsync(okRuns, rows)}
   <section class="card">
-    <h2 style="margin-top:0">Mean time per call, median run</h2>
-    <p class="muted">Log scale. Each row is one workload; the distance between the two marks is the ratio between browsers, printed on the right. Hover a mark for p50 and p99. The table below has every number.</p>
-    <div class="legend">${okRuns.map((r) => `<span style="--swatch: var(--series-${seriesKey(r.name)})">${esc(r.label)}${r.data.automation?.headless === false ? ' (headed)' : ''}</span>`).join('')}</div>
-    <div class="chart-wrap">${chart}</div>
-  </section>
-
-  <section class="card">
-    <h2 style="margin-top:0">Table</h2>
-    <div class="table-wrap">${renderTable(okRuns, rows)}</div>
-  </section>
-
-  <section class="card">
-    <h2 style="margin-top:0">Environment</h2>
+    <h2>Environment</h2>
     ${renderEnvironment(runs)}
   </section>
 
@@ -235,7 +337,7 @@ function renderChart(okRuns, rows) {
   const height = top + rows.length * rowH + 16;
   const values = rows.flatMap((row) => okRuns.map((r) => row.by[r.name]).filter(Boolean).map(usOf));
   const lo = Math.floor(Math.log10(Math.max(0.1, Math.min(...values))));
-  const hi = Math.ceil(Math.log10(Math.max(...values) * 1.05));
+  const hi = Math.max(lo + 1, Math.ceil(Math.log10(Math.max(...values) * 1.05)));
   const x = (v) => left + ((Math.log10(Math.max(v, 10 ** lo)) - lo) / (hi - lo)) * plotW;
   const tickLabel = (p) => (p >= 3 ? `${10 ** (p - 3)} ms` : `${10 ** p} µs`);
   const parts = [];
@@ -290,14 +392,42 @@ function renderTable(okRuns, rows) {
   return `<table><thead><tr>${head.join('')}</tr></thead><tbody>${body.join('')}</tbody></table>`;
 }
 
+function renderFsync(okRuns, rows) {
+  const traced = tracedRuns(okRuns);
+  if (!traced.length) return '';
+  const jobs = collectJobs(traced, rows);
+  const head = ['<th>Workload</th>', ...traced.map((r) => `<th class="num">${esc(r.label)} syncs/call</th><th class="num">ms in sync/call</th><th class="num">outside loop, per pass</th>`)];
+  const body = jobs.map((job) => {
+    const cells = [`<td class="wl">${esc(job.label)}</td>`];
+    for (const r of traced) {
+      const s = job.by[r.name];
+      cells.push(`<td class="num">${s ? fmtPerCall(s.perCall) : '–'}</td><td class="num">${s ? (s.secondsPerCall * 1000).toFixed(2) : '–'}</td><td class="num">${s?.betweenPasses ? fmtPerCall(s.betweenPasses.perPass) : '–'}</td>`);
+    }
+    return `<tr>${cells.join('')}</tr>`;
+  });
+  const paths = traced.map((r) => {
+    const st = r.data.automation.strace;
+    return `<p><strong>${esc(r.label)}</strong>: ${st.total.count} calls, ${st.total.seconds.toFixed(1)} s inside them` +
+      `${st.outsideWorkloads?.count ? `, ${st.outsideWorkloads.count} outside any workload` : ''}. Most-synced files:</p>` +
+      `<ul class="paths">${st.byPath.slice(0, 8).map((p) => `<li><code>${esc(p.path)}</code>: ${p.count} calls, ${p.seconds.toFixed(2)} s</li>`).join('')}</ul>`;
+  }).join('');
+  return `
+  <section class="card">
+    <h2>Durability syscalls per call (strace)</h2>
+    <p class="muted">${esc(traced[0].data.automation.strace.syscalls)} counted by strace and attributed to each pass's timed loop by wall-clock window; "per call" divides by calls × passes, warm-up included. "Outside the loop" is the per-pass file creation and deletion that workloads 1–4 do around their timed loop; new-file times those steps inside the loop.</p>
+    <div class="table-wrap"><table><thead><tr>${head.join('')}</tr></thead><tbody>${body.join('')}</tbody></table></div>
+    ${paths}
+  </section>`;
+}
+
 function renderEnvironment(runs) {
   const rowsHtml = runs.map((r) => {
     const a = r.data.automation || {};
     const s = r.data.support || {};
     const res = s.timerResolutionMs != null ? `${(s.timerResolutionMs * 1000).toFixed(0)} µs` : '–';
-    return `<tr><td class="wl">${esc(r.label)}</td><td>${esc(a.version || '–')}</td><td>${a.headless === false ? 'headed' : 'headless'}</td><td class="num">${res}</td><td>${s.crossOriginIsolated ? 'yes' : 'no'}</td><td><code>${esc(a.executablePath || '–')}</code></td><td><code>${esc(r.data.env?.userAgent || '–')}</code></td></tr>`;
+    return `<tr><td class="wl">${esc(r.label)}</td><td>${esc(a.version || '–')}</td><td>${a.headless === false ? 'headed' : 'headless'}${a.strace ? ', strace' : ''}</td><td>${esc(a.profileFilesystem === undefined ? '–' : fsText(a.profileFilesystem))}</td><td class="num">${res}</td><td>${s.crossOriginIsolated ? 'yes' : 'no'}</td><td><code>${esc(a.executablePath || '–')}</code></td><td><code>${esc(r.data.env?.userAgent || '–')}</code></td></tr>`;
   }).join('');
-  return `<div class="table-wrap"><table><thead><tr><th>Browser</th><th>Version</th><th>Mode</th><th class="num">performance.now() step</th><th>Isolated</th><th>Executable</th><th>User agent</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Browser</th><th>Version</th><th>Mode</th><th>Profile on</th><th class="num">performance.now() step</th><th>Isolated</th><th>Executable</th><th>User agent</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
 }
 
 // --- CLI -----------------------------------------------------------------------------------

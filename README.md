@@ -169,6 +169,8 @@ node run.mjs --preset quick              # Chrome, then Firefox
 node run.mjs --preset full --browsers firefox,chrome --label ticket
 node run.mjs --preset quick --workloads small-append,new-file --m 500
 node run.mjs --preset quick --chrome-path /usr/bin/google-chrome --firefox-path /usr/bin/firefox
+node run.mjs --preset full --strace-fsync --label strace          # Linux: count fsyncs per call
+node run.mjs --preset full --profiles-dir /tmp/opfs-tmpfs --label tmpfs   # fsync-free control
 node report.mjs ../results/<run-dir>     # rebuild summary.md and report.html from saved JSON
 ```
 
@@ -178,9 +180,26 @@ browser version, executable, mode and host details), `<browser>.summary.md`
 and `<browser>.log`, plus `summary.md` (comparison table followed by each
 Bugzilla summary) and `report.html` (standalone: a log-scale dot plot of
 mean time per call per workload, the table behind it, environment details,
-and the summaries). `node run.mjs --help` lists every option, including
-`--headed`, `--n/--s/--runs/--m/--chunks/--workloads` overrides,
-`--keep-profiles` and `--timeout-min`.
+and the summaries). The report and `summary.md` are grouped into two
+sections, per-call write cost (workloads 1–4) and per-file cost (workload
+5), so each can be cited on its own. `node run.mjs --help` lists every
+option, including `--headed`, `--n/--s/--runs/--m/--chunks/--workloads`
+overrides, `--keep-profiles` and `--timeout-min`.
+
+`--strace-fsync` (Linux) launches each browser under `strace`, following
+every child process, and counts `fsync`, `fdatasync`, `syncfs` and
+`sync_file_range` calls. The worker stamps each workload with its wall-clock
+window, so the driver attributes every call to a workload and reports
+syncs per call (calls × passes, warm-up included) and the most-synced files,
+in a third report section and in the JSON under `automation.strace`. The raw
+log is kept as `<browser>.strace.log.gz`. strace's seccomp filter leaves
+untraced syscalls at native speed, so only the traced calls carry ptrace
+overhead; still, label such runs and do not mix their timings with clean
+ones.
+
+The fsync-free control is a run whose profiles live on tmpfs
+(`--profiles-dir /tmp/...` on Linux): whatever cost survives there is CPU
+and IPC, whatever disappears was durable writes.
 
 Notes:
 
@@ -218,8 +237,16 @@ row. The "Derived" block in the summary prints these for you:
   create/write/close/delete loop costs; the summary also prints the sum
   without delete, which is what populating OPFS pays per file, and compares
   the first write into a new file with a small-append call.
-- **append+flush** stands on its own; compare it across browsers but do not
-  subtract it from anything.
+- **append+flush** is a control: both browsers flush per call, so this row
+  shows what one durable flush costs on this machine and that the disk
+  treats both browsers alike. Do not subtract it from anything.
+- **Syncs per call** (traced runs): how many durability syscalls each
+  workload issues per call, and which files they hit. Expect about 1 for
+  append+flush and 0 for the other write workloads; anything above 0 in the
+  per-file rows is metadata being committed synchronously. Compare with a
+  tmpfs run: the per-file cost that remains on tmpfs is the CPU/IPC floor,
+  the rest is syncs × the platform's fsync cost (real cache flush on Linux,
+  cheap on macOS, where `fsync()` does not flush the drive).
 
 ## Capturing a Firefox Profiler recording with IPC markers
 
@@ -261,8 +288,18 @@ A profile taken while workload 1 runs shows what the worker thread does per
 to `main`. Nothing is benchmarked in CI; the workflow runs
 `node automation/site.mjs`, which copies every `results/<run>/` directory to
 `runs/<run>/` on the site, generates `runs/index.html`, and uses the newest
-run's `report.html` as the site's front page. So the loop is: run the
-benchmark, commit the new `results/<run>/` directory, push.
+clean run's `report.html` as the site's front page (runs traced with
+`--strace-fsync` carry inflated timings, so they are listed but never
+promoted). So the loop is: run the benchmark, commit the new
+`results/<run>/` directory, push.
+
+What to commit from a run directory: `chrome.summary.md`,
+`firefox.summary.md`, `summary.md` and `report.html`. The per-browser JSON,
+the browser logs and `run.json` contain absolute paths from your machine,
+and `*.strace.log.gz` is ignored by git; keep those local and attach them to
+the bug directly when they are needed as evidence. Each report records
+which filesystem held the browser profiles, so a tmpfs control run says so
+on its own page.
 
 One-time setup: in the repository settings, under **Pages**, set **Source**
 to **GitHub Actions**. To preview locally:

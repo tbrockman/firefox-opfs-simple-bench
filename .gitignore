@@ -1,5 +1,6 @@
 automation/node_modules/
 automation/.profiles/
 _site/
+results/**/*.strace.log.gz
 results/**/*.log
 results/**/*.json
