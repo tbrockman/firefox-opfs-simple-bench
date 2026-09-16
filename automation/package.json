@@ -1,0 +1,14 @@
+{
+  "name": "opfs-bench-automation",
+  "private": true,
+  "type": "module",
+  "description": "Runs the OPFS sync write benchmark in isolated Chrome and Firefox instances and builds a report.",
+  "scripts": {
+    "bench": "node run.mjs",
+    "report": "node report.mjs",
+    "install-firefox": "puppeteer browsers install firefox"
+  },
+  "dependencies": {
+    "puppeteer": "^25.11.0"
+  }
+}

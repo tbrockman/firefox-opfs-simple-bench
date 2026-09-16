@@ -21,6 +21,7 @@ The workloads below cover both shapes.
 | `bench.css`  | Styling. |
 | `serve.py`   | Optional stdlib server that adds COOP/COEP headers so `performance.now()` gets microsecond resolution (see [Timer resolution](#timer-resolution)). |
 | `README.md`  | This file. |
+| `automation/` | Optional Puppeteer driver: isolated Chrome and Firefox runs in series, JSON collection, `summary.md` and `report.html`. See [Automated runs](#automated-runs-puppeteer). |
 
 ## Workloads
 
@@ -149,6 +150,55 @@ throwaway profiles on the same filesystem as a normal profile: on Ubuntu
 `/tmp` is tmpfs, where `flush()` costs microseconds instead of the
 milliseconds an `fsync` costs on disk, which would misrepresent workload 4.
 Firefox installed as a snap can only see profiles under your home directory.
+
+### Automated runs (Puppeteer)
+
+`automation/` holds a small Node driver that does the whole loop
+unattended: it serves this directory with COOP/COEP headers, launches each
+browser in series with a brand-new profile (so a brand-new, empty OPFS),
+waits for the page to finish, saves the JSON and the Bugzilla summary,
+closes the browser, deletes the profile, and finally builds a comparison
+report. The benchmark page itself stays dependency-free; only the driver
+needs npm.
+
+```sh
+cd automation
+npm install                              # Puppeteer + Chrome for Testing
+npx puppeteer browsers install firefox   # Firefox stable, pinned by Puppeteer
+node run.mjs --preset quick              # Chrome, then Firefox
+node run.mjs --preset full --browsers firefox,chrome --label ticket
+node run.mjs --preset quick --workloads small-append,new-file --m 500
+node run.mjs --preset quick --chrome-path /usr/bin/google-chrome --firefox-path /usr/bin/firefox
+node report.mjs ../results/<run-dir>     # rebuild summary.md and report.html from saved JSON
+```
+
+Each run writes `results/<timestamp>[-label]/` containing, per browser,
+`<browser>.json` (the page's results plus an `automation` block with the
+browser version, executable, mode and host details), `<browser>.summary.md`
+and `<browser>.log`, plus `summary.md` (comparison table followed by each
+Bugzilla summary) and `report.html` (standalone: a log-scale dot plot of
+mean time per call per workload, the table behind it, environment details,
+and the summaries). `node run.mjs --help` lists every option, including
+`--headed`, `--n/--s/--runs/--m/--chunks/--workloads` overrides,
+`--keep-profiles` and `--timeout-min`.
+
+Notes:
+
+- Throwaway profiles are created under `automation/.profiles/` (gitignored)
+  so they sit on the same disk as the repository. Pass `--profiles-dir` if
+  the repository lives on tmpfs, otherwise `flush()` costs vanish.
+- `--firefox-path` and `--chrome-path` point the driver at system browsers.
+  A snap-packaged Firefox can only read profiles under your home directory,
+  so keep `--profiles-dir` there.
+- Puppeteer's Chrome for Testing has no AppArmor profile, and Ubuntu 23.10+
+  denies unprivileged user namespaces to unconfined binaries, so its sandbox
+  cannot start. The driver notices and retries with `--no-sandbox` (noted
+  in `chrome.log` and in the JSON's `automation.launchArgs`); that changes
+  Chrome's process isolation, not what the benchmark measures. To avoid it
+  entirely use the packaged browser: `--chrome-path /usr/bin/google-chrome`.
+- The page exposes `window.__opfsBench` (`ready`, `support`, `progress`,
+  `done`, `results`, `summary`) for the driver; it is also handy from the
+  devtools console.
 
 ## Reading the results
 

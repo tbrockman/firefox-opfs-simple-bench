@@ -143,8 +143,18 @@ const state = {
 };
 
 // ?autorun=quick or ?autorun=full runs immediately after support detection
-// and prints the final JSON to the console (see README, "Headless runs").
-const autorun = new URLSearchParams(location.search).get('autorun');
+// and prints the final JSON to the console. Optional overrides on top of the
+// preset: &n=&s=&runs=&m=&chunks=65536,1048576&workloads=small-append,new-file
+// (see README, "Headless runs" and "Automated runs").
+const params = new URLSearchParams(location.search);
+const autorun = params.get('autorun');
+
+// Automation hook: automation/run.mjs drives the page through this object.
+// It is also handy from the devtools console.
+const hook = window.__opfsBench = {
+  ready: false, support: null, running: false, done: false,
+  progress: '', status: '', results: null, summary: null, error: null,
+};
 
 // --- formatting helpers ---------------------------------------------------
 
@@ -211,11 +221,11 @@ function updateNotes() {
   for (const b of document.querySelectorAll('button[data-preset]')) {
     b.classList.toggle('active', b.dataset.preset === state.preset);
   }
-  el.presetNote.textContent = state.preset === 'custom'
-    ? 'custom'
-    : (state.preset === 'quick'
+  el.presetNote.textContent = state.preset === 'quick'
       ? 'quick: small N, R and M; a minute or two, mostly in workloads 4 and 5'
-      : 'full: ticket defaults, ~82 MB per pass; workload 4 (flush per write) and workload 5 (M files) can each take 10+ min (the log projects it after each warm-up)');
+      : state.preset === 'full'
+      ? 'full: ticket defaults, ~82 MB per pass; workload 4 (flush per write) and workload 5 (M files) can each take 10+ min (the log projects it after each warm-up)'
+      : state.preset;
   try {
     const cfg = readConfig();
     const total = cfg.n * cfg.s;
@@ -283,6 +293,8 @@ function onWorkerMessage(msg) {
   switch (msg.type) {
     case 'ready': {
       state.support = msg.support;
+      hook.support = msg.support;
+      hook.ready = true;
       if (!msg.support.ok) {
         setSupport('err', `<strong>OPFS sync access handles are not usable here.</strong> ${esc(msg.support.reason)}`);
         log(`Unsupported: ${msg.support.reason}`);
@@ -301,10 +313,7 @@ function onWorkerMessage(msg) {
       log(`Ready. Timer resolution ${res}; leftover files removed: ${msg.support.removedLeftovers}.`);
       state.ready = true;
       el.run.disabled = false;
-      if (autorun && PRESETS[autorun]) {
-        applyPreset(autorun);
-        start();
-      }
+      if (autorun && PRESETS[autorun]) start();
       break;
     }
     case 'log':
@@ -313,6 +322,7 @@ function onWorkerMessage(msg) {
     case 'progress': {
       const phase = msg.phase === 'warmup' ? 'warm-up' : `run ${msg.run}/${msg.runs}`;
       state.progressText = `${msg.label}: ${phase} (workload ${msg.jobIndex + 1}/${msg.jobCount})`;
+      hook.progress = state.progressText;
       const passes = msg.runs + 1;
       const passIndex = msg.phase === 'warmup' ? 0 : msg.run;
       el.progress.value = (msg.jobIndex + passIndex / passes) / msg.jobCount;
@@ -348,6 +358,7 @@ function start() {
     return;
   }
   state.running = true;
+  Object.assign(hook, { running: true, done: false, results: null, summary: null, error: null });
   state.results = {
     benchmark: 'opfs-sync-write-overhead',
     version: 1,
@@ -380,6 +391,7 @@ function renderStatus() {
   if (!state.running) return;
   const elapsed = ((performance.now() - state.startedAt) / 1000).toFixed(1);
   el.status.textContent = `Running ${state.progressText} · ${elapsed} s elapsed`;
+  hook.status = el.status.textContent;
 }
 
 function finish(error) {
@@ -395,6 +407,10 @@ function finish(error) {
     state.results.error = error || null;
     renderOutputs();
   }
+  Object.assign(hook, {
+    running: false, done: true, error: error || null, results: state.results,
+    summary: state.results ? bugzillaSummary(state.results) : null,
+  });
   if (error) {
     const where = error.jobId ? ` during ${error.jobId}` : '';
     let text = `${error.name}${where}: ${error.message}`;
@@ -574,6 +590,18 @@ $('download-json').addEventListener('click', () => {
 // --- boot -----------------------------------------------------------------------
 
 applyPreset(PRESETS[autorun] ? autorun : 'full');
+{
+  let overridden = false;
+  for (const [key, input] of [['n', el.n], ['s', el.s], ['runs', el.runs], ['m', el.m], ['chunks', el.chunks]]) {
+    if (params.has(key)) { input.value = params.get(key); overridden = true; }
+  }
+  if (params.has('workloads')) {
+    const want = new Set(params.get('workloads').split(','));
+    for (const cb of document.querySelectorAll('input[data-workload]')) cb.checked = want.has(cb.dataset.workload);
+    overridden = true;
+  }
+  if (overridden) { state.preset = `${state.preset}+overrides`; updateNotes(); }
+}
 
 if (!self.isSecureContext) {
   setSupport('err', 'This page is not in a secure context. OPFS requires https:// or http://localhost; ' +
