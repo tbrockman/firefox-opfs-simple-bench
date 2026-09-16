@@ -142,6 +142,8 @@ function hostText(runs) {
 const runLabel = (r) => `${r.label}${r.data.automation?.headless === false ? ' (headed)' : ''}`;
 
 const fsText = (fsInfo) => (fsInfo ? `${fsInfo.type} (${fsInfo.mountPoint})` : 'unknown');
+const prefsText = (prefs) => Object.entries(prefs).map(([k, v]) => `${k}=${v}`).join(', ');
+const prefsText = (prefs) => Object.entries(prefs).map(([k, v]) => `${k}=${v}`).join(', ');
 
 // "Profiles on: ext4 (/)" or, when browsers differed, one entry per browser.
 function profilesText(runs) {
@@ -205,6 +207,12 @@ function renderMarkdown(dir, runs, okRuns, rows) {
   if (okRuns[0]) out.push(`Config: ${configText(okRuns[0].data)}  `);
   out.push(`Browsers: ${runs.map(runLabel).join(', ')}  `);
   if (runs.some((r) => r.data.automation?.profileFilesystem !== undefined)) out.push(`Profiles on: ${profilesText(runs)}  `);
+  for (const r of runs) {
+    if (r.data.automation?.firefoxPrefs) out.push(`${r.label} prefs: ${prefsText(r.data.automation.firefoxPrefs)}  `);
+  }
+  for (const r of runs) {
+    if (r.data.automation?.firefoxPrefs) out.push(`${r.label} prefs: ${prefsText(r.data.automation.firefoxPrefs)}  `);
+  }
   if (tracedRuns(okRuns).length) out.push('Traced with strace: fsync counts below; ptrace overhead applies to those calls only.  ');
   out.push(`Date: ${when}`, '');
 
@@ -311,6 +319,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   <h1>${esc(title)}</h1>
   <p class="sub">${esc(when)} · ${esc(hostText(runs))}</p>
   ${okRuns[0] ? `<p class="sub">Config: ${esc(configText(okRuns[0].data))}${runs.some((r) => r.data.automation?.profileFilesystem !== undefined) ? ` · Profiles on: ${esc(profilesText(runs))}` : ''}</p>` : ''}
+  ${runs.filter((r) => r.data.automation?.firefoxPrefs).map((r) => `<p class="sub">${esc(r.label)} prefs: ${esc(prefsText(r.data.automation.firefoxPrefs))}</p>`).join('')}
+  ${runs.filter((r) => r.data.automation?.firefoxPrefs).map((r) => `<p class="sub">${esc(r.label)} prefs: ${esc(prefsText(r.data.automation.firefoxPrefs))}</p>`).join('')}
   ${tracedRuns(okRuns).length ? '<p class="sub">Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.</p>' : ''}
 ${sections}
 ${renderFsync(okRuns, rows)}

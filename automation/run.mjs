@@ -48,6 +48,8 @@ const USAGE = `Usage: node run.mjs [options]
                               calls only, everything else is timed as usual
   --chrome-path PATH          use this Chrome/Chromium binary instead of Puppeteer's
   --firefox-path PATH         use this Firefox binary instead of Puppeteer's
+  --firefox-pref NAME=VALUE   set an about:config pref in Firefox's throwaway profile
+                              (repeatable; true/false/numbers are typed, anything else is a string)
   --out DIR                   where run directories are created (default: ../results)
   --label NAME                suffix for the run directory name
   --profiles-dir DIR          where throwaway profiles are created (default: ./.profiles;
@@ -79,7 +81,8 @@ function parseArgs(argv) {
     const key = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
     let value = eq === -1 ? undefined : arg.slice(eq + 1);
     if (value === undefined && i + 1 < argv.length && !argv[i + 1].startsWith('--')) value = argv[++i];
-    out[key] = value === undefined ? true : value;
+    if (key === 'firefox-pref') (out[key] ||= []).push(value);
+    else out[key] = value === undefined ? true : value;
   }
   return out;
 }
@@ -97,6 +100,14 @@ const opts = {
   headed: args.headed === true,
   noSandbox: args['no-sandbox'] === true,
   straceFsync: args['strace-fsync'] === true,
+  firefoxPrefs: Object.fromEntries((args['firefox-pref'] || []).map((kv) => {
+    const eq = String(kv).indexOf('=');
+    if (eq === -1) throw new Error(`--firefox-pref expects NAME=VALUE, got "${kv}"`);
+    const name = kv.slice(0, eq);
+    const raw = kv.slice(eq + 1);
+    const value = raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+    return [name, value];
+  })),
   chromePath: args['chrome-path'] ? path.resolve(String(args['chrome-path'])) : undefined,
   firefoxPath: args['firefox-path'] ? path.resolve(String(args['firefox-path'])) : undefined,
   out: path.resolve(String(args.out || path.join(SITE, 'results'))),
@@ -227,6 +238,7 @@ async function launchBrowser(name, profileDir, log, runDir) {
     extraPrefsFirefox: {
       'browser.shell.checkDefaultBrowser': false,
       'app.update.enabled': false,
+      ...opts.firefoxPrefs,
     },
   });
 }
@@ -335,6 +347,7 @@ async function runBrowser(name, runDir, serverUrl) {
       version: record.version,
       executablePath: lastRealExecutable ?? browser.process()?.spawnfile ?? null,
       launchArgs: lastLaunchArgs,
+      firefoxPrefs: name === 'firefox' && Object.keys(opts.firefoxPrefs).length ? opts.firefoxPrefs : undefined,
       strace: null,
       headless: !opts.headed,
       profileDir,
