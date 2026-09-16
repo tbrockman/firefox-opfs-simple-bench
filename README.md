@@ -255,78 +255,21 @@ A profile taken while workload 1 runs shows what the worker thread does per
    permalink and paste it into the bug. Release and Nightly builds
    symbolicate automatically from Mozilla's symbol server.
 
-## Filing the bug
+## Publishing results (GitHub Pages)
 
-Suggested Bugzilla fields:
+`.github/workflows/pages.yml` publishes the committed results on every push
+to `main`. Nothing is benchmarked in CI; the workflow runs
+`node automation/site.mjs`, which copies every `results/<run>/` directory to
+`runs/<run>/` on the site, generates `runs/index.html`, and uses the newest
+run's `report.html` as the site's front page. So the loop is: run the
+benchmark, commit the new `results/<run>/` directory, push.
 
-- **Product**: Core
-- **Component**: DOM: File (OPFS lives there; triage may move the bug to
-  Storage: Quota Manager depending on where the profile points)
-- **Type**: defect  **Keywords**: perf
-- **Summary**: `OPFS: small FileSystemSyncAccessHandle.write() calls and file create/open/close are N× slower than Chromium`
-- **Attachments**: this directory as a zip, the downloaded JSON for each
-  browser, and the profiler permalink.
+One-time setup: in the repository settings, under **Pages**, set **Source**
+to **GitHub Actions**. To preview locally:
 
-Description template (fill in the numbers from the two summaries):
-
-> Populating OPFS from a snapshot, either as many individual files or as
-> one file written in chunks, takes about 20× longer in Firefox than in
-> Chrome on the same machine. The attached benchmark separates the per-call
-> cost of `FileSystemSyncAccessHandle.write()` from bandwidth and from
-> file-lifecycle cost. On __ (CPU, disk, OS): 20000 × 4 KiB appends take
-> __ ms in Firefox __ vs __ ms in Chrome __ (__ µs vs __ µs per call);
-> overwriting 4 KiB at a fixed offset 20000 times takes __ ms vs __ ms, so
-> __ µs of each append is attributable to growing the file; writing the same
-> 82 MB in 1 MiB calls takes __ ms vs __ ms, so the cost is per call, not
-> per byte. Creating, opening, writing 4 KiB to and closing a file costs
-> __ ms per file in Firefox vs __ ms in Chrome (create+open __ / first write
-> __ / close __ ms), and deleting it __ vs __ ms. A Firefox Profiler
-> recording with IPC markers taken during the append workload is attached
-> (link); the marker table shows __ once per `write()` call, __ µs each.
-> Raw JSON for both browsers is attached; reproduction steps are in the
-> README.
-
-## Results
-
-Paste the output of **Copy Bugzilla summary** for each browser here. One
-block per browser; the template below matches what the button produces.
-
-### Firefox __ (fill in)
-
-Environment:
-- User agent: `…`
-- Platform: …; hardwareConcurrency: …
-- Timestamp: …
-- performance.now() resolution in the worker: … (crossOriginIsolated: …)
-- Config: preset=full, N=20000, S=4096 B, chunks=64 KiB / 1 MiB, R=5, M=2000
-
-| Workload | Calls | Bytes/call | Total (ms) | Total min–max (ms) | ops/s | MB/s | p50 (µs) | p90 (µs) | p99 (µs) | max (µs) | 1st call (µs) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| small-append | 20,000 | 4,096 | | | | | | | | | |
-| small-overwrite | 20,000 | 4,096 | | | | | | | | | |
-| chunked-append (64 KiB) | 1,250 | 65,536 | | | | | | | | | |
-| chunked-append (1 MiB) | 79 | 1,048,576 | | | | | | | | | |
-| append+flush | 20,000 | 4,096 | | | | | | | | | |
-| new-file: create+open | 2,000 | – | | | | – | | | | | |
-| new-file: first write | 2,000 | 4,096 | | | | | | | | | |
-| new-file: close | 2,000 | – | | | | – | | | | | |
-| new-file: delete | 2,000 | – | | | | – | | | | | |
-| new-file: full cycle | 2,000 | 4,096 | | | | | | | | | |
-
-Derived:
-- Fixed per-call floor (small-overwrite): __ µs/call
-- Extra cost per call when the write grows the file (append − overwrite): __ µs
-- Same 82 MB in 79 × 1 MiB calls: __ ms vs __ ms for 20000 × 4 KiB (__× slower)
-- small-append: first call into the fresh file __ µs vs p99 __ µs
-- new-file: __ ms per file = create+open __ + first write __ + close __ + delete __ ms
-
-### Chrome __ (fill in)
-
-(same block)
-
-### Safari __ (optional)
-
-(same block)
+```sh
+node automation/site.mjs && python3 -m http.server 8000 -d _site
+```
 
 ## Caveats
 

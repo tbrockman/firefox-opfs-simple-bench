@@ -1,2 +1,5 @@
 automation/node_modules/
 automation/.profiles/
+_site/
+results/**/*.log
+results/**/*.json
