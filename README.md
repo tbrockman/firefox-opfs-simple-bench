@@ -21,6 +21,7 @@ The workloads below cover both shapes.
 | `bench.css`  | Styling. |
 | `serve.py`   | Optional stdlib server that adds COOP/COEP headers so `performance.now()` gets microsecond resolution (see [Timer resolution](#timer-resolution)). |
 | `README.md`  | This file. |
+| `patches/` | Experimental mozilla-central patches for the OPFS metadata database, with build recipe and measured results. See [patches/README.md](patches/README.md). |
 | `automation/` | Optional Puppeteer driver: isolated Chrome and Firefox runs in series, JSON collection, `summary.md` and `report.html`. See [Automated runs](#automated-runs-puppeteer). |
 
 ## Workloads
@@ -261,7 +262,11 @@ A profile taken while workload 1 runs shows what the worker thread does per
    - **Interval**: 1 ms (0.5 ms if you want denser samples).
    - **Buffer size**: 256 MB or more.
    - **Threads**: keep the defaults and add `DOM Worker` (the thread the
-     benchmark runs on). To also see the parent-process side of any IPC add
+     benchmark runs on) and `StreamTrans` (the StreamTransportService pool:
+     the access handle dispatches every read and write to a task queue on
+     that pool and blocks the worker until it completes, so per-write
+     activity, including any IPC, appears on a `StreamTrans #N` thread and
+     not on the worker). To also see the parent-process side of any IPC add
      `IPDL Background` and `QuotaManager IO`.
    - **Features**: tick **IPC Messages**. Leave **Native Stacks** on so C++
      frames appear in the call tree.
@@ -271,13 +276,16 @@ A profile taken while workload 1 runs shows what the worker thread does per
 5. Start recording (profiler button → **Start Recording**, or
    Ctrl+Shift+1), click **Run benchmark**, wait for "Done", then **Capture**
    (Ctrl+Shift+2).
-6. In the profiler UI, find the **DOM Worker** track under the content
-   process for `localhost`. If it is hidden, right-click the track list and
-   choose **Show all tracks**, or type "DOM Worker" in the track search.
-   Select it and open the **Marker Table**; filter on `IPC`. Whatever
+6. In the profiler UI, find the content process for `localhost`. If tracks
+   are hidden, right-click the track list and choose **Show all tracks**,
+   or use the track search. The **DOM Worker** track shows only the
+   per-open messages (`Msg_GetFileHandle`, `Msg_GetAccessHandle`,
+   `Msg_Close`, `Msg_RemoveEntry`); its call tree shows `ReadOrWrite`
+   waiting in a sync loop. Select the **StreamTrans #N** track that is busy
+   during the run and open its **Marker Table**, filtered on `IPC`: whatever
    message repeats once per `write()` is what the ticket should name, with
-   its per-message duration. The **Call Tree** (inverted) shows which C++
-   frames under `FileSystemSyncAccessHandle::Write` the time goes to.
+   its per-message duration. That thread's **Call Tree** shows the C++ frames
+   under the stream's `Write` the time goes to.
 7. Click **Upload Local Profile**, keep hidden threads included, copy the
    permalink and paste it into the bug. Release and Nightly builds
    symbolicate automatically from Mozilla's symbol server.

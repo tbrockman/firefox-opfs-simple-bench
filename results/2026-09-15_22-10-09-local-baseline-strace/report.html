@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPFS sync write benchmark 2026-09-16</title>
+<meta name="opfs-bench-traced" content="true">
+<style>
+:root {
+  color-scheme: light dark;
+  --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series-chrome: #2a78d6; --series-firefox: #eb6834; --series-safari: #1baf7a; --series-other: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-chrome: #3987e5; --series-firefox: #d95926; --series-safari: #199e70; --series-other: #c98500;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+p { margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.sub { color: var(--ink-2); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 8px; color: var(--ink-2); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--swatch); }
+.chart-wrap { overflow-x: auto; }
+svg text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
+svg .tick { fill: var(--muted); font-size: 11px; }
+svg .ratio { fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .axis { stroke: var(--axis); stroke-width: 1; }
+svg .link { stroke: var(--axis); stroke-width: 2; stroke-linecap: round; }
+svg .dot { stroke: var(--surface); stroke-width: 2; }
+svg .hit { fill: transparent; }
+svg .hit:hover + .dot, svg .dot:hover { r: 7; }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.wl { font-weight: 600; }
+td .desc { color: var(--muted); font-size: 0.88em; font-weight: 400; }
+ul.paths { margin: 4px 0 10px; padding-left: 18px; }
+ul.paths li { margin: 2px 0; }
+details { margin: 8px 0; }
+summary { cursor: pointer; color: var(--ink-2); }
+pre { background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; font-size: 0.85em; white-space: pre-wrap; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>OPFS sync write benchmark</h1>
+  <p class="sub">2026-09-16T05:10:12.315Z · AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-generic x64</p>
+  <p class="sub">Config: preset=quick+overrides, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=1, M=200 · Profiles on: ext4 (/)</p>
+  
+  <p class="sub">Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.</p>
+
+
+  <section class="card">
+    <h2>Per-file cost</h2>
+    <p class="muted">Workload 5. Each step of create+open, first write, close and delete timed on its own, per file, plus the full cycle. Populating a file system pays the first three per file. Mean time per call in the median run, log scale; the distance between the marks is the ratio between browsers, printed on the right. Hover a mark for p50 and p99.</p>
+    <div class="legend"><span style="--swatch: var(--series-firefox)">Firefox 158</span></div>
+    <div class="chart-wrap"><svg width="1010" height="200" viewBox="0 0 1010 200" role="img" aria-label="Mean time per call for each workload and browser, log scale"><line class="grid" x1="230" x2="230" y1="28" y2="184"/><text class="tick" x="230" y="22" text-anchor="middle">100 µs</text><line class="grid" x1="380" x2="380" y1="28" y2="184"/><text class="tick" x="380" y="22" text-anchor="middle">1 ms</text><line class="grid" x1="530" x2="530" y1="28" y2="184"/><text class="tick" x="530" y="22" text-anchor="middle">10 ms</text><line class="grid" x1="680" x2="680" y1="28" y2="184"/><text class="tick" x="680" y="22" text-anchor="middle">100 ms</text><line class="grid" x1="830" x2="830" y1="28" y2="184"/><text class="tick" x="830" y="22" text-anchor="middle">1000 ms</text><line class="axis" x1="230" x2="830" y1="184" y2="184"/><text x="218" y="53" text-anchor="end">new-file: create+open</text><circle class="hit" cx="633.0589451002331" cy="49" r="12"><title>Firefox 158 — new-file: create+open: mean 48.6 ms/call, p50 48.0 ms, p99 56.3 ms, total 9.7 s</title></circle><circle class="dot" cx="633.0589451002331" cy="49" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: create+open: mean 48.6 ms/call, p50 48.0 ms, p99 56.3 ms, total 9.7 s</title></circle><text x="218" y="83" text-anchor="end">new-file: first write</text><circle class="hit" cx="348.1934184925752" cy="79" r="12"><title>Firefox 158 — new-file: first write: mean 614 µs/call, p50 580 µs, p99 940 µs, total 122.7 ms</title></circle><circle class="dot" cx="348.1934184925752" cy="79" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: first write: mean 614 µs/call, p50 580 µs, p99 940 µs, total 122.7 ms</title></circle><text x="218" y="113" text-anchor="end">new-file: close</text><circle class="hit" cx="604.9633691995678" cy="109" r="12"><title>Firefox 158 — new-file: close: mean 31.6 ms/call, p50 31.3 ms, p99 35.1 ms, total 6.3 s</title></circle><circle class="dot" cx="604.9633691995678" cy="109" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: close: mean 31.6 ms/call, p50 31.3 ms, p99 35.1 ms, total 6.3 s</title></circle><text x="218" y="143" text-anchor="end">new-file: delete</text><circle class="hit" cx="606.3230746863769" cy="139" r="12"><title>Firefox 158 — new-file: delete: mean 32.3 ms/call, p50 31.7 ms, p99 38.2 ms, total 6.5 s</title></circle><circle class="dot" cx="606.3230746863769" cy="139" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: delete: mean 32.3 ms/call, p50 31.7 ms, p99 38.2 ms, total 6.5 s</title></circle><text x="218" y="173" text-anchor="end">new-file: full cycle</text><circle class="hit" cx="688.0430019418536" cy="169" r="12"><title>Firefox 158 — new-file: full cycle: mean 113.1 ms/call, p50 111.7 ms, p99 122.6 ms, total 22.6 s</title></circle><circle class="dot" cx="688.0430019418536" cy="169" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: full cycle: mean 113.1 ms/call, p50 111.7 ms, p99 122.6 ms, total 22.6 s</title></circle></svg></div>
+    <div class="table-wrap"><table><thead><tr><th>Workload</th><th class="num">Firefox 158 µs/call</th><th class="num">p50 / p99 (µs)</th><th class="num">total</th></tr></thead><tbody><tr><td class="wl">new-file: create+open<div class="desc">getFileHandle({create: true}) + createSyncAccessHandle() on a name that does not exist yet</div></td><td class="num">48.6 ms</td><td class="num">47960 / 56280</td><td class="num">9.7 s</td></tr><tr><td class="wl">new-file: first write<div class="desc">first write(4096 B, {at: 0}) into the empty file</div></td><td class="num">614 µs</td><td class="num">580 / 940</td><td class="num">122.7 ms</td></tr><tr><td class="wl">new-file: close<div class="desc">close() on the access handle</div></td><td class="num">31.6 ms</td><td class="num">31280 / 35060</td><td class="num">6.3 s</td></tr><tr><td class="wl">new-file: delete<div class="desc">removeEntry(name)</div></td><td class="num">32.3 ms</td><td class="num">31740 / 38240</td><td class="num">6.5 s</td></tr><tr><td class="wl">new-file: full cycle<div class="desc">create+open → write 4096 B → close → delete, per file</div></td><td class="num">113.1 ms</td><td class="num">111660 / 122600</td><td class="num">22.6 s</td></tr></tbody></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Durability syscalls per call (strace)</h2>
+    <p class="muted">fsync,fdatasync,syncfs,sync_file_range counted by strace and attributed to each pass's timed loop by wall-clock window; "per call" divides by calls × passes, warm-up included. "Outside the loop" is the per-pass file creation and deletion that workloads 1–4 do around their timed loop; new-file times those steps inside the loop.</p>
+    <div class="table-wrap"><table><thead><tr><th>Workload</th><th class="num">Firefox 158 syncs/call</th><th class="num">ms in sync/call</th><th class="num">outside loop, per pass</th></tr></thead><tbody><tr><td class="wl">new-file</td><td class="num">21</td><td class="num">107.29</td><td class="num">0.00</td></tr></tbody></table></div>
+    <p><strong>Firefox 158</strong>: 8862 calls, 46.2 s inside them, 421 outside any workload. Most-synced files:</p><ul class="paths"><li><code>profile/storage/default/http+++127.0.0.1+42247/fs/metadata.sqlite-journal</code>: 2810 calls, 14.30 s</li><li><code>profile/storage/default/http+++127.0.0.1+42247/fs</code>: 2810 calls, 14.19 s</li><li><code>profile/storage/default/http+++127.0.0.1+42247/fs/metadata.sqlite</code>: 2810 calls, 14.19 s</li><li><code>profile/datareporting/glean/db/glean.sqlite-wal</code>: 64 calls, 0.50 s</li><li><code>profile</code>: 51 calls, 0.42 s</li><li><code>profile/datareporting/glean/db/glean.sqlite</code>: 33 calls, 0.24 s</li><li><code>profile/storage/permanent/chrome/idb</code>: 29 calls, 0.26 s</li><li><code>profile/storage.sqlite-journal</code>: 20 calls, 0.13 s</li></ul>
+  </section>
+  <section class="card">
+    <h2>Environment</h2>
+    <div class="table-wrap"><table><thead><tr><th>Browser</th><th>Version</th><th>Mode</th><th>Profile on</th><th class="num">performance.now() step</th><th>Isolated</th><th>Executable</th><th>User agent</th></tr></thead><tbody><tr><td class="wl">Firefox 158</td><td>firefox/158.0a1</td><td>headless, strace</td><td>ext4 (/)</td><td class="num">20 µs</td><td>yes</td><td><code>/home/theo/dev/firefox/obj-opt/dist/bin/firefox</code></td><td><code>Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0</code></td></tr></tbody></table></div>
+  </section>
+
+  <details class="card"><summary>Firefox 158: Bugzilla summary</summary><pre>**OPFS `FileSystemSyncAccessHandle.write()` per-call overhead benchmark**
+
+Environment:
+- User agent: `Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0`
+- Platform: Linux x86_64; hardwareConcurrency: 16
+- Timestamp: 2026-09-16T05:10:12.315Z
+- performance.now() resolution in the worker: 20 µs (crossOriginIsolated: true)
+- navigator.storage.estimate(): 0.5 MB used of 10737 MB
+- Config: preset=quick+overrides, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=1, M=200
+
+Median run of R=1 (by total time) after one warm-up pass; latency percentiles are per call; &quot;1st call&quot; is call number 1 of that run (for the append workloads, the first write into the freshly created file):
+
+| Workload | Calls | Bytes/call | Total (ms) | Total min–max (ms) | ops/s | MB/s | p50 (µs) | p90 (µs) | p99 (µs) | max (µs) | 1st call (µs) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| new-file: create+open | 200 | – | 9729.5 | 9729.5–9729.5 | 21 | – | 47960.0 | 50880.0 | 56280.0 | 90540.0 | 52980.0 |
+| new-file: first write | 200 | 4,096 | 122.7 | 122.7–122.7 | 1,629 | 6.7 | 580.0 | 660.0 | 940.0 | 3320.0 | 600.0 |
+| new-file: close | 200 | – | 6321.0 | 6321.0–6321.0 | 32 | – | 31280.0 | 32680.0 | 35060.0 | 35460.0 | 35460.0 |
+| new-file: delete | 200 | – | 6454.3 | 6454.3–6454.3 | 31 | – | 31740.0 | 33560.0 | 38240.0 | 41260.0 | 33560.0 |
+| new-file: full cycle | 200 | 4,096 | 22628.2 | 22628.2–22628.2 | 9 | 0.0 | 111660.0 | 117840.0 | 122600.0 | 156640.0 | 122600.0 |
+
+Derived:
+- new-file: 113.1 ms per file (9 files/s) = create+open 48.6 + first write 0.6 + close 31.6 + delete 32.3 ms
+- new-file without delete (what populating OPFS pays per file): 80.9 ms
+</pre></details>
+</main>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPFS sync write benchmark 2026-09-16</title>
+<meta name="opfs-bench-traced" content="false">
+<style>
+:root {
+  color-scheme: light dark;
+  --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series-chrome: #2a78d6; --series-firefox: #eb6834; --series-safari: #1baf7a; --series-other: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-chrome: #3987e5; --series-firefox: #d95926; --series-safari: #199e70; --series-other: #c98500;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+p { margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.sub { color: var(--ink-2); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 8px; color: var(--ink-2); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--swatch); }
+.chart-wrap { overflow-x: auto; }
+svg text { font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--ink); }
+svg .tick { fill: var(--muted); font-size: 11px; }
+svg .ratio { fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .axis { stroke: var(--axis); stroke-width: 1; }
+svg .link { stroke: var(--axis); stroke-width: 2; stroke-linecap: round; }
+svg .dot { stroke: var(--surface); stroke-width: 2; }
+svg .hit { fill: transparent; }
+svg .hit:hover + .dot, svg .dot:hover { r: 7; }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.wl { font-weight: 600; }
+td .desc { color: var(--muted); font-size: 0.88em; font-weight: 400; }
+ul.paths { margin: 4px 0 10px; padding-left: 18px; }
+ul.paths li { margin: 2px 0; }
+details { margin: 8px 0; }
+summary { cursor: pointer; color: var(--ink-2); }
+pre { background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; font-size: 0.85em; white-space: pre-wrap; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>OPFS sync write benchmark</h1>
+  <p class="sub">2026-09-16T05:08:22.753Z · AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-generic x64</p>
+  <p class="sub">Config: preset=quick, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=3, M=200 · Profiles on: ext4 (/)</p>
+  
+  
+
+  <section class="card">
+    <h2>Per-call write cost</h2>
+    <p class="muted">Workloads 1–4. small-overwrite is the fixed per-call floor; small-append adds the cost of growing the file; chunked-append writes the same bytes in far fewer calls; append+flush is a control, since both browsers flush per call. Mean time per call in the median run, log scale; the distance between the marks is the ratio between browsers, printed on the right. Hover a mark for p50 and p99.</p>
+    <div class="legend"><span style="--swatch: var(--series-firefox)">Firefox 158</span></div>
+    <div class="chart-wrap"><svg width="1010" height="200" viewBox="0 0 1010 200" role="img" aria-label="Mean time per call for each workload and browser, log scale"><line class="grid" x1="230" x2="230" y1="28" y2="184"/><text class="tick" x="230" y="22" text-anchor="middle">10 µs</text><line class="grid" x1="430" x2="430" y1="28" y2="184"/><text class="tick" x="430" y="22" text-anchor="middle">100 µs</text><line class="grid" x1="630" x2="630" y1="28" y2="184"/><text class="tick" x="630" y="22" text-anchor="middle">1 ms</text><line class="grid" x1="830" x2="830" y1="28" y2="184"/><text class="tick" x="830" y="22" text-anchor="middle">10 ms</text><line class="axis" x1="230" x2="830" y1="184" y2="184"/><text x="218" y="53" text-anchor="end">small-append</text><circle class="hit" cx="355.82073003542723" cy="49" r="12"><title>Firefox 158 — small-append: mean 42.6 µs/call, p50 40.0 µs, p99 80.0 µs, total 85.1 ms</title></circle><circle class="dot" cx="355.82073003542723" cy="49" r="5" fill="var(--series-firefox)"><title>Firefox 158 — small-append: mean 42.6 µs/call, p50 40.0 µs, p99 80.0 µs, total 85.1 ms</title></circle><text x="218" y="83" text-anchor="end">small-overwrite</text><circle class="hit" cx="349.12128697312056" cy="79" r="12"><title>Firefox 158 — small-overwrite: mean 39.4 µs/call, p50 40.0 µs, p99 60.0 µs, total 78.8 ms</title></circle><circle class="dot" cx="349.12128697312056" cy="79" r="5" fill="var(--series-firefox)"><title>Firefox 158 — small-overwrite: mean 39.4 µs/call, p50 40.0 µs, p99 60.0 µs, total 78.8 ms</title></circle><text x="218" y="113" text-anchor="end">chunked-append (64 KiB)</text><circle class="hit" cx="377.6292177424109" cy="109" r="12"><title>Firefox 158 — chunked-append (64 KiB): mean 54.7 µs/call, p50 60.0 µs, p99 80.0 µs, total 6.8 ms</title></circle><circle class="dot" cx="377.6292177424109" cy="109" r="5" fill="var(--series-firefox)"><title>Firefox 158 — chunked-append (64 KiB): mean 54.7 µs/call, p50 60.0 µs, p99 80.0 µs, total 6.8 ms</title></circle><text x="218" y="143" text-anchor="end">chunked-append (1 MiB)</text><circle class="hit" cx="488.00692227250056" cy="139" r="12"><title>Firefox 158 — chunked-append (1 MiB): mean 195 µs/call, p50 180 µs, p99 240 µs, total 1.6 ms</title></circle><circle class="dot" cx="488.00692227250056" cy="139" r="5" fill="var(--series-firefox)"><title>Firefox 158 — chunked-append (1 MiB): mean 195 µs/call, p50 180 µs, p99 240 µs, total 1.6 ms</title></circle><text x="218" y="173" text-anchor="end">append+flush</text><circle class="hit" cx="775.0254470129058" cy="169" r="12"><title>Firefox 158 — append+flush: mean 5310 µs/call, p50 5580 µs, p99 7520 µs, total 10.6 s</title></circle><circle class="dot" cx="775.0254470129058" cy="169" r="5" fill="var(--series-firefox)"><title>Firefox 158 — append+flush: mean 5310 µs/call, p50 5580 µs, p99 7520 µs, total 10.6 s</title></circle></svg></div>
+    <div class="table-wrap"><table><thead><tr><th>Workload</th><th class="num">Firefox 158 µs/call</th><th class="num">p50 / p99 (µs)</th><th class="num">total</th></tr></thead><tbody><tr><td class="wl">small-append<div class="desc">2000 × write(4096 B) at offset = current size; the file grows on every call</div></td><td class="num">42.6 µs</td><td class="num">40 / 80</td><td class="num">85.1 ms</td></tr><tr><td class="wl">small-overwrite<div class="desc">2000 × write(4096 B) at offset 0 into a file pre-sized to 4096 B; the size never changes</div></td><td class="num">39.4 µs</td><td class="num">40 / 60</td><td class="num">78.8 ms</td></tr><tr><td class="wl">chunked-append (64 KiB)<div class="desc">125 × write(65536 B) appending; the same 8192000 B total as small-append</div></td><td class="num">54.7 µs</td><td class="num">60 / 80</td><td class="num">6.8 ms</td></tr><tr><td class="wl">chunked-append (1 MiB)<div class="desc">8 × write(1048576 B) appending; the same 8192000 B total as small-append</div></td><td class="num">195 µs</td><td class="num">180 / 240</td><td class="num">1.6 ms</td></tr><tr><td class="wl">append+flush<div class="desc">small-append with flush() after every write (2000 × 4096 B)</div></td><td class="num">5310 µs</td><td class="num">5580 / 7520</td><td class="num">10.6 s</td></tr></tbody></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Per-file cost</h2>
+    <p class="muted">Workload 5. Each step of create+open, first write, close and delete timed on its own, per file, plus the full cycle. Populating a file system pays the first three per file. Mean time per call in the median run, log scale; the distance between the marks is the ratio between browsers, printed on the right. Hover a mark for p50 and p99.</p>
+    <div class="legend"><span style="--swatch: var(--series-firefox)">Firefox 158</span></div>
+    <div class="chart-wrap"><svg width="1010" height="200" viewBox="0 0 1010 200" role="img" aria-label="Mean time per call for each workload and browser, log scale"><line class="grid" x1="230" x2="230" y1="28" y2="184"/><text class="tick" x="230" y="22" text-anchor="middle">100 µs</text><line class="grid" x1="430" x2="430" y1="28" y2="184"/><text class="tick" x="430" y="22" text-anchor="middle">1 ms</text><line class="grid" x1="630" x2="630" y1="28" y2="184"/><text class="tick" x="630" y="22" text-anchor="middle">10 ms</text><line class="grid" x1="830" x2="830" y1="28" y2="184"/><text class="tick" x="830" y="22" text-anchor="middle">100 ms</text><line class="axis" x1="230" x2="830" y1="184" y2="184"/><text x="218" y="53" text-anchor="end">new-file: create+open</text><circle class="hit" cx="732.0993505166307" cy="49" r="12"><title>Firefox 158 — new-file: create+open: mean 32.4 ms/call, p50 31.4 ms, p99 42.2 ms, total 6.5 s</title></circle><circle class="dot" cx="732.0993505166307" cy="49" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: create+open: mean 32.4 ms/call, p50 31.4 ms, p99 42.2 ms, total 6.5 s</title></circle><text x="218" y="83" text-anchor="end">new-file: first write</text><circle class="hit" cx="237.72403238976943" cy="79" r="12"><title>Firefox 158 — new-file: first write: mean 109 µs/call, p50 100 µs, p99 160 µs, total 21.9 ms</title></circle><circle class="dot" cx="237.72403238976943" cy="79" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: first write: mean 109 µs/call, p50 100 µs, p99 160 µs, total 21.9 ms</title></circle><text x="218" y="113" text-anchor="end">new-file: close</text><circle class="hit" cx="694.4095222159856" cy="109" r="12"><title>Firefox 158 — new-file: close: mean 21.0 ms/call, p50 20.4 ms, p99 29.6 ms, total 4.2 s</title></circle><circle class="dot" cx="694.4095222159856" cy="109" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: close: mean 21.0 ms/call, p50 20.4 ms, p99 29.6 ms, total 4.2 s</title></circle><text x="218" y="143" text-anchor="end">new-file: delete</text><circle class="hit" cx="697.331164513118" cy="139" r="12"><title>Firefox 158 — new-file: delete: mean 21.7 ms/call, p50 21.1 ms, p99 26.5 ms, total 4.3 s</title></circle><circle class="dot" cx="697.331164513118" cy="139" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: delete: mean 21.7 ms/call, p50 21.1 ms, p99 26.5 ms, total 4.3 s</title></circle><text x="218" y="173" text-anchor="end">new-file: full cycle</text><circle class="hit" cx="805.2291289367839" cy="169" r="12"><title>Firefox 158 — new-file: full cycle: mean 75.2 ms/call, p50 72.9 ms, p99 94.9 ms, total 15.0 s</title></circle><circle class="dot" cx="805.2291289367839" cy="169" r="5" fill="var(--series-firefox)"><title>Firefox 158 — new-file: full cycle: mean 75.2 ms/call, p50 72.9 ms, p99 94.9 ms, total 15.0 s</title></circle></svg></div>
+    <div class="table-wrap"><table><thead><tr><th>Workload</th><th class="num">Firefox 158 µs/call</th><th class="num">p50 / p99 (µs)</th><th class="num">total</th></tr></thead><tbody><tr><td class="wl">new-file: create+open<div class="desc">getFileHandle({create: true}) + createSyncAccessHandle() on a name that does not exist yet</div></td><td class="num">32.4 ms</td><td class="num">31400 / 42180</td><td class="num">6.5 s</td></tr><tr><td class="wl">new-file: first write<div class="desc">first write(4096 B, {at: 0}) into the empty file</div></td><td class="num">109 µs</td><td class="num">100 / 160</td><td class="num">21.9 ms</td></tr><tr><td class="wl">new-file: close<div class="desc">close() on the access handle</div></td><td class="num">21.0 ms</td><td class="num">20360 / 29600</td><td class="num">4.2 s</td></tr><tr><td class="wl">new-file: delete<div class="desc">removeEntry(name)</div></td><td class="num">21.7 ms</td><td class="num">21120 / 26520</td><td class="num">4.3 s</td></tr><tr><td class="wl">new-file: full cycle<div class="desc">create+open → write 4096 B → close → delete, per file</div></td><td class="num">75.2 ms</td><td class="num">72940 / 94940</td><td class="num">15.0 s</td></tr></tbody></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Environment</h2>
+    <div class="table-wrap"><table><thead><tr><th>Browser</th><th>Version</th><th>Mode</th><th>Profile on</th><th class="num">performance.now() step</th><th>Isolated</th><th>Executable</th><th>User agent</th></tr></thead><tbody><tr><td class="wl">Firefox 158</td><td>firefox/158.0a1</td><td>headless</td><td>ext4 (/)</td><td class="num">20 µs</td><td>yes</td><td><code>/home/theo/dev/firefox/obj-opt/dist/bin/firefox</code></td><td><code>Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0</code></td></tr></tbody></table></div>
+  </section>
+
+  <details class="card"><summary>Firefox 158: Bugzilla summary</summary><pre>**OPFS `FileSystemSyncAccessHandle.write()` per-call overhead benchmark**
+
+Environment:
+- User agent: `Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0`
+- Platform: Linux x86_64; hardwareConcurrency: 16
+- Timestamp: 2026-09-16T05:08:22.753Z
+- performance.now() resolution in the worker: 20 µs (crossOriginIsolated: true)
+- navigator.storage.estimate(): 0.5 MB used of 10737 MB
+- Config: preset=quick, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=3, M=200
+
+Median run of R=3 (by total time) after one warm-up pass; latency percentiles are per call; &quot;1st call&quot; is call number 1 of that run (for the append workloads, the first write into the freshly created file):
+
+| Workload | Calls | Bytes/call | Total (ms) | Total min–max (ms) | ops/s | MB/s | p50 (µs) | p90 (µs) | p99 (µs) | max (µs) | 1st call (µs) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| small-append | 2,000 | 4,096 | 85.1 | 84.1–88.4 | 23,491 | 96.2 | 40.0 | 60.0 | 80.0 | 840.0 | 120.0 |
+| small-overwrite | 2,000 | 4,096 | 78.8 | 77.3–78.9 | 25,374 | 103.9 | 40.0 | 40.0 | 60.0 | 80.0 | 80.0 |
+| chunked-append (64 KiB) | 125 | 65,536 | 6.8 | 6.7–6.9 | 18,275 | 1197.7 | 60.0 | 60.0 | 80.0 | 140.0 | 140.0 |
+| chunked-append (1 MiB) | 8 | 1,048,576 | 1.6 | 1.5–1.6 | 5,128 | 5251.3 | 180.0 | 240.0 | 240.0 | 240.0 | 240.0 |
+| append+flush | 2,000 | 4,096 | 10620.8 | 10426.6–10689.3 | 188 | 0.8 | 5580.0 | 5920.0 | 7520.0 | 15140.0 | 4700.0 |
+| new-file: create+open | 200 | – | 6479.3 | 6475.5–6551.8 | 31 | – | 31400.0 | 35760.0 | 42180.0 | 50500.0 | 39940.0 |
+| new-file: first write | 200 | 4,096 | 21.9 | 21.8–22.7 | 9,149 | 37.5 | 100.0 | 140.0 | 160.0 | 160.0 | 120.0 |
+| new-file: close | 200 | – | 4198.3 | 4185.5–4238.0 | 48 | – | 20360.0 | 22340.0 | 29600.0 | 30340.0 | 22340.0 |
+| new-file: delete | 200 | – | 4342.0 | 4321.8–4353.7 | 46 | – | 21120.0 | 23200.0 | 26520.0 | 30160.0 | 20940.0 |
+| new-file: full cycle | 200 | 4,096 | 15037.5 | 15023.3–15154.4 | 13 | 0.1 | 72940.0 | 79040.0 | 94940.0 | 120320.0 | 94940.0 |
+
+Derived:
+- Fixed per-call floor (small-overwrite, size never changes): 39.4 µs/call mean, 40.0 µs p50
+- Size-growing write (small-append): 42.6 µs/call mean, 40.0 µs p50
+- Extra cost per call when the write grows the file (append − overwrite): 3.2 µs mean, 0.0 µs p50
+- Same 8.2 MB in 125 × 64 KiB calls: 6.8 ms (1198 MB/s) vs 85.1 ms for 2,000 × 4 KiB; the small calls are 12.4× slower for the same bytes
+- Same 8.2 MB in 8 × 1 MiB calls: 1.6 ms (5251 MB/s) vs 85.1 ms for 2,000 × 4 KiB; the small calls are 54.6× slower for the same bytes
+- flush() after every write adds 5267.8 µs/call on top of small-append (append+flush: 5310.4 µs/call mean)
+- small-append: first call into the fresh file 120.0 µs vs p50 40.0 / p99 80.0 µs; across runs 80.0–140.0 µs
+- chunked-append (64 KiB): first call into the fresh file 140.0 µs vs p50 60.0 / p99 80.0 µs; across runs 120.0–160.0 µs
+- chunked-append (1 MiB): first call into the fresh file 240.0 µs vs p50 180.0 / p99 240.0 µs; across runs 220.0–280.0 µs
+- append+flush: first call into the fresh file 4700.0 µs vs p50 5580.0 / p99 7520.0 µs; across runs 4700.0–5680.0 µs
+- new-file: 75.2 ms per file (13 files/s) = create+open 32.4 + first write 0.1 + close 21.0 + delete 21.7 ms
+- new-file without delete (what populating OPFS pays per file): 53.5 ms
+- First write into a new file (4 KiB): 109.3 µs vs 42.6 µs per small-append call
+</pre></details>
+</main>
+</body>
+</html>

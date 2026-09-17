@@ -1,0 +1,19 @@
+--- a/dom/fs/parent/datamodel/FileSystemDataManager.cpp	2026-09-15 21:54:10.325392251 -0700
++++ b/dom/fs/parent/datamodel/FileSystemDataManager.cpp	2026-09-15 21:54:10.338592984 -0700
+@@ -134,6 +134,16 @@
+                     OpenDatabaseWithFileURL, dbFileUrl, ""_ns,
+                     mozIStorageService::CONNECTION_DEFAULT)));
+ 
++  // Use a write-ahead log instead of the default rollback journal. With the
++  // rollback journal every metadata transaction costs three fsyncs (the
++  // journal, the directory it was created in, then the database); with WAL
++  // with synchronous=FULL every transaction stays durable but costs a single
++  // fsync of the WAL instead of three.
++  QM_TRY(QM_TO_RESULT(
++      connection->ExecuteSimpleSQL("PRAGMA journal_mode = WAL;"_ns)));
++  QM_TRY(QM_TO_RESULT(
++      connection->ExecuteSimpleSQL("PRAGMA synchronous = FULL;"_ns)));
++
+   ResultConnection result(connection);
+ 
+   return result;
