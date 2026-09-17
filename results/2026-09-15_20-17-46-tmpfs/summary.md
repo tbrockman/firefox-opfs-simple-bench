@@ -4,6 +4,7 @@ Host: AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-g
 Config: preset=full, N=20000, S=4096 B, chunks=64 KiB / 1 MiB, R=5, M=2000  
 Browsers: Chrome 152, Firefox 155  
 Profiles on: tmpfs (/tmp)  
+Note: Control run with the browser profiles on tmpfs: fsync is free there, so durability-bound rows show the CPU and IPC floor  
 Date: 2026-09-16T03:17:46.590Z
 
 ## Per-call write cost (median run, mean time per call)

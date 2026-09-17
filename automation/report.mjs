@@ -141,6 +141,30 @@ function hostText(runs) {
 
 const runLabel = (r) => `${r.label}${r.data.automation?.headless === false ? ' (headed)' : ''}`;
 
+// Facts that make a run an experiment rather than a cross-browser comparison:
+// a single browser, a browser binary that is neither Puppeteer's nor a
+// system install (a local build), or a note attached with --note.
+function runFacts(runs, okRuns) {
+  const custom = runs.filter((r) => r.data.automation?.executableSource === 'custom');
+  const notes = [...new Set(runs.map((r) => r.data.automation?.note).filter(Boolean))];
+  return {
+    browsers: okRuns.map((r) => r.name),
+    single: okRuns.length === 1,
+    customBuilds: custom.map((r) => `${r.label} from ${r.data.automation.executablePath}`),
+    notes,
+    traced: tracedRuns(okRuns).length > 0,
+  };
+}
+
+function noticeLines(facts) {
+  const lines = [];
+  if (facts.single) lines.push(`Single-browser run (${facts.browsers.join(', ')}): no cross-browser comparison.`);
+  for (const c of facts.customBuilds) lines.push(`Local build: ${c}.`);
+  for (const n of facts.notes) lines.push(`Note: ${n}`);
+  if (facts.traced) lines.push('Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.');
+  return lines;
+}
+
 const fsText = (fsInfo) => (fsInfo ? `${fsInfo.type} (${fsInfo.mountPoint})` : 'unknown');
 const prefsText = (prefs) => Object.entries(prefs).map(([k, v]) => `${k}=${v}`).join(', ');
 
@@ -209,7 +233,7 @@ function renderMarkdown(dir, runs, okRuns, rows) {
   for (const r of runs) {
     if (r.data.automation?.firefoxPrefs) out.push(`${r.label} prefs: ${prefsText(r.data.automation.firefoxPrefs)}  `);
   }
-  if (tracedRuns(okRuns).length) out.push('Traced with strace: fsync counts below; ptrace overhead applies to those calls only.  ');
+  for (const line of noticeLines(runFacts(runs, okRuns))) out.push(`${line}  `);
   out.push(`Date: ${when}`, '');
 
   const tables = [];
@@ -234,6 +258,8 @@ function renderMarkdown(dir, runs, okRuns, rows) {
 // --- HTML ------------------------------------------------------------------------------
 
 function renderHtml(runs, okRuns, rows) {
+  const facts = runFacts(runs, okRuns);
+  const isExperiment = facts.single || facts.customBuilds.length || facts.notes.length || facts.traced;
   const title = 'OPFS sync write benchmark';
   const when = runs[0]?.data.env?.timestamp || '';
   const seriesCss = (mode) => Object.entries(SERIES).map(([k, v]) => `--series-${k}: ${v[mode]};`).join(' ');
@@ -259,7 +285,10 @@ function renderHtml(runs, okRuns, rows) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} ${esc(when.slice(0, 10))}</title>
-<meta name="opfs-bench-traced" content="${tracedRuns(okRuns).length ? 'true' : 'false'}">
+<meta name="opfs-bench-traced" content="${facts.traced ? 'true' : 'false'}">
+<meta name="opfs-bench-browsers" content="${esc(facts.browsers.join(','))}">
+<meta name="opfs-bench-custom-build" content="${facts.customBuilds.length ? 'true' : 'false'}">
+<meta name="opfs-bench-note" content="${esc(facts.notes.join(' · '))}">
 <style>
 :root {
   color-scheme: light dark;
@@ -283,6 +312,8 @@ p { margin: 0 0 8px; }
 .muted { color: var(--muted); }
 .sub { color: var(--ink-2); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+.notice { border-left: 4px solid var(--series-firefox); background: var(--surface); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 12px 0; }
+.notice ul { margin: 6px 0 0; padding-left: 18px; } .notice li { margin: 2px 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 8px; color: var(--ink-2); }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--swatch); }
 .chart-wrap { overflow-x: auto; }
@@ -316,7 +347,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   <p class="sub">${esc(when)} · ${esc(hostText(runs))}</p>
   ${okRuns[0] ? `<p class="sub">Config: ${esc(configText(okRuns[0].data))}${runs.some((r) => r.data.automation?.profileFilesystem !== undefined) ? ` · Profiles on: ${esc(profilesText(runs))}` : ''}</p>` : ''}
   ${runs.filter((r) => r.data.automation?.firefoxPrefs).map((r) => `<p class="sub">${esc(r.label)} prefs: ${esc(prefsText(r.data.automation.firefoxPrefs))}</p>`).join('')}
-  ${tracedRuns(okRuns).length ? '<p class="sub">Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.</p>' : ''}
+  ${isExperiment ? `<div class="notice"><strong>Experiment, not a cross-browser comparison.</strong><ul>${noticeLines(facts).map((l) => `<li>${esc(l)}</li>`).join('')}</ul></div>` : ''}
 ${sections}
 ${renderFsync(okRuns, rows)}
   <section class="card">

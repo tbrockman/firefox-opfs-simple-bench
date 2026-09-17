@@ -12,70 +12,6 @@ individual files under paths or as raw bytes written in chunks into one
 file, took about 20× longer in Firefox than in Chrome on the same machine.
 The workloads below cover both shapes.
 
-## Files
-
-| File         | Purpose |
-|--------------|---------|
-| `index.html` | UI: configuration, results table, "Copy Bugzilla summary", JSON download. Plain ES module, no build step, no dependencies. |
-| `worker.js`  | All OPFS work. `createSyncAccessHandle()` is only available in dedicated workers. Every workload is commented with what it isolates. |
-| `bench.css`  | Styling. |
-| `serve.py`   | Optional stdlib server that adds COOP/COEP headers so `performance.now()` gets microsecond resolution (see [Timer resolution](#timer-resolution)). |
-| `README.md`  | This file. |
-| `patches/` | Experimental mozilla-central patches for the OPFS metadata database, with build recipe and measured results. See [patches/README.md](patches/README.md). |
-| `automation/` | Optional Puppeteer driver: isolated Chrome and Firefox runs in series, JSON collection, `summary.md` and `report.html`. See [Automated runs](#automated-runs-puppeteer). |
-
-## Workloads
-
-Every pass runs on its own fresh file, which is deleted afterwards. Each
-workload gets one warm-up pass and then R measured runs. The table shows
-the run with the median total time, plus the min and max total across runs.
-
-| # | Workload        | What it does                                                          | What it isolates |
-|---|-----------------|-----------------------------------------------------------------------|------------------|
-| 1 | small-append    | N × `write(S bytes, {at: currentSize})`; the file grows on every call  | Fixed per-call cost plus whatever the engine does when a write grows the file. |
-| 2 | small-overwrite | N × `write(S bytes, {at: 0})` into a file pre-sized to S bytes         | Fixed per-call cost only; the size never changes. **1 − 2 is the cost of growing the file.** |
-| 3 | chunked-append  | The same total bytes as 1, appended in 64 KiB and 1 MiB calls         | Per-byte cost. If total time collapses here, the overhead is per call, not per byte. |
-| 4 | append+flush    | Workload 1 with `flush()` after every write                           | Flush cost. Reported separately because flush semantics and costs legitimately differ between engines. |
-| 5 | new-file        | M × create+open → write S bytes → close → delete, **each step timed on its own**, distinct file names | What creating a file costs, step by step, with nothing amortised over a long write loop. Reported as five rows: create+open, first write, close, delete, full cycle. |
-
-Two details about new files, since they are easy to miss:
-
-- Workloads 1, 3 and 4 create a brand-new file for every pass, but creating
-  and opening it happens **outside** the timed loop. The first write into
-  that empty file is call number 1 of the loop. It is reported on its own
-  as the **1st call** column (and, across runs, as `firstCallMsMin/Max` in
-  the JSON), so a slow first write cannot hide inside the percentiles.
-- Workload 5 is the only one that times `getFileHandle({create: true})`,
-  `createSyncAccessHandle()`, `close()` and `removeEntry()`. Populating OPFS
-  does not delete, so its per-file cost is create+open plus first write plus
-  close; the summary prints that sum.
-
-Defaults (the **Full** preset): N = 20000, S = 4096 bytes (≈ 82 MB per
-append pass), R = 5, chunk sizes 64 KiB and 1 MiB, M = 2000. The **Quick**
-preset uses N = 2000, R = 3, M = 200. N, S, chunk sizes, R and M are all
-editable; a note under the fields shows how much data each pass writes.
-
-Expected duration: workloads 1–3 take seconds. Workload 4 is bound by
-`fsync` (a few milliseconds per call on an SSD with write barriers), so the
-full preset spends N × a few ms × (R + 1), roughly 10 minutes, there in
-every browser. Workload 5 costs M file creations per pass; at tens of
-milliseconds per file that is another 10–15 minutes for M = 2000 and R = 5.
-The log prints a projection after every warm-up pass. For a first look
-untick 4 and 5; every row is independent, so they can be run on their own
-later with a smaller N or M.
-
-Measurement details:
-
-- `performance.now()` is called on the worker thread around every call and
-  the delta stored in a `Float64Array` allocated before the loop starts. The
-  whole loop is timed separately, so total time, ops/s and MB/s
-  (MB = 10⁶ bytes) do not depend on the clock's resolution; p50/p90/p99/max
-  and the 1st-call column do.
-- Access handles are closed and files removed in `finally` blocks. On
-  startup the worker deletes any `opfs-bench-*` file left by an aborted run.
-- `QuotaExceededError` is caught and reported with the pass size, so you can
-  lower N or S.
-
 ## Running it
 
 ### 1. Serve the directory
@@ -171,6 +107,8 @@ node run.mjs --preset full --browsers firefox,chrome --label ticket
 node run.mjs --preset quick --workloads small-append,new-file --m 500
 node run.mjs --preset quick --chrome-path /usr/bin/google-chrome --firefox-path /usr/bin/firefox
 node run.mjs --preset full --strace-fsync --label strace          # Linux: count fsyncs per call
+node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox \
+  --label local-wal --note 'local build with patches/0001-opfs-metadata-wal.patch'   # experiment
 node run.mjs --preset full --profiles-dir /tmp/opfs-tmpfs --label tmpfs   # fsync-free control
 node report.mjs ../results/<run-dir>     # rebuild summary.md and report.html from saved JSON
 ```
@@ -186,6 +124,14 @@ sections, per-call write cost (workloads 1–4) and per-file cost (workload
 5), so each can be cited on its own. `node run.mjs --help` lists every
 option, including `--headed`, `--n/--s/--runs/--m/--chunks/--workloads`
 overrides, `--keep-profiles` and `--timeout-min`.
+
+Runs that are not a plain cross-browser comparison are marked as
+experiments: a single browser, a browser binary that is neither Puppeteer's
+nor a system install (the driver records where each binary came from), a
+`--note`, or strace tracing. The report shows a banner saying so, the
+summary header repeats it, and the site lists such runs under a separate
+heading and never uses them as the front page. Use `--note` to say what an
+experiment is, for instance which patch a local build carries.
 
 `--strace-fsync` (Linux) launches each browser under `strace`, following
 every child process, and counts `fsync`, `fdatasync`, `syncfs` and
@@ -219,6 +165,70 @@ Notes:
 - The page exposes `window.__opfsBench` (`ready`, `support`, `progress`,
   `done`, `results`, `summary`) for the driver; it is also handy from the
   devtools console.
+
+## Files
+
+| File         | Purpose |
+|--------------|---------|
+| `index.html` | UI: configuration, results table, "Copy Bugzilla summary", JSON download. Plain ES module, no build step, no dependencies. |
+| `worker.js`  | All OPFS work. `createSyncAccessHandle()` is only available in dedicated workers. Every workload is commented with what it isolates. |
+| `bench.css`  | Styling. |
+| `serve.py`   | Optional stdlib server that adds COOP/COEP headers so `performance.now()` gets microsecond resolution (see [Timer resolution](#timer-resolution)). |
+| `README.md`  | This file. |
+| `patches/` | Experimental mozilla-central patches for the OPFS metadata database, with build recipe and measured results. See [patches/README.md](patches/README.md). |
+| `automation/` | Optional Puppeteer driver: isolated Chrome and Firefox runs in series, JSON collection, `summary.md` and `report.html`. See [Automated runs](#automated-runs-puppeteer). |
+
+## Workloads
+
+Every pass runs on its own fresh file, which is deleted afterwards. Each
+workload gets one warm-up pass and then R measured runs. The table shows
+the run with the median total time, plus the min and max total across runs.
+
+| # | Workload        | What it does                                                          | What it isolates |
+|---|-----------------|-----------------------------------------------------------------------|------------------|
+| 1 | small-append    | N × `write(S bytes, {at: currentSize})`; the file grows on every call  | Fixed per-call cost plus whatever the engine does when a write grows the file. |
+| 2 | small-overwrite | N × `write(S bytes, {at: 0})` into a file pre-sized to S bytes         | Fixed per-call cost only; the size never changes. **1 − 2 is the cost of growing the file.** |
+| 3 | chunked-append  | The same total bytes as 1, appended in 64 KiB and 1 MiB calls         | Per-byte cost. If total time collapses here, the overhead is per call, not per byte. |
+| 4 | append+flush    | Workload 1 with `flush()` after every write                           | Flush cost. Reported separately because flush semantics and costs legitimately differ between engines. |
+| 5 | new-file        | M × create+open → write S bytes → close → delete, **each step timed on its own**, distinct file names | What creating a file costs, step by step, with nothing amortised over a long write loop. Reported as five rows: create+open, first write, close, delete, full cycle. |
+
+Two details about new files, since they are easy to miss:
+
+- Workloads 1, 3 and 4 create a brand-new file for every pass, but creating
+  and opening it happens **outside** the timed loop. The first write into
+  that empty file is call number 1 of the loop. It is reported on its own
+  as the **1st call** column (and, across runs, as `firstCallMsMin/Max` in
+  the JSON), so a slow first write cannot hide inside the percentiles.
+- Workload 5 is the only one that times `getFileHandle({create: true})`,
+  `createSyncAccessHandle()`, `close()` and `removeEntry()`. Populating OPFS
+  does not delete, so its per-file cost is create+open plus first write plus
+  close; the summary prints that sum.
+
+Defaults (the **Full** preset): N = 20000, S = 4096 bytes (≈ 82 MB per
+append pass), R = 5, chunk sizes 64 KiB and 1 MiB, M = 2000. The **Quick**
+preset uses N = 2000, R = 3, M = 200. N, S, chunk sizes, R and M are all
+editable; a note under the fields shows how much data each pass writes.
+
+Expected duration: workloads 1–3 take seconds. Workload 4 is bound by
+`fsync` (a few milliseconds per call on an SSD with write barriers), so the
+full preset spends N × a few ms × (R + 1), roughly 10 minutes, there in
+every browser. Workload 5 costs M file creations per pass; at tens of
+milliseconds per file that is another 10–15 minutes for M = 2000 and R = 5.
+The log prints a projection after every warm-up pass. For a first look
+untick 4 and 5; every row is independent, so they can be run on their own
+later with a smaller N or M.
+
+Measurement details:
+
+- `performance.now()` is called on the worker thread around every call and
+  the delta stored in a `Float64Array` allocated before the loop starts. The
+  whole loop is timed separately, so total time, ops/s and MB/s
+  (MB = 10⁶ bytes) do not depend on the clock's resolution; p50/p90/p99/max
+  and the 1st-call column do.
+- Access handles are closed and files removed in `finally` blocks. On
+  startup the worker deletes any `opfs-bench-*` file left by an aborted run.
+- `QuotaExceededError` is caught and reported with the pass size, so you can
+  lower N or S.
 
 ## Reading the results
 
@@ -295,11 +305,12 @@ A profile taken while workload 1 runs shows what the worker thread does per
 `.github/workflows/pages.yml` publishes the committed results on every push
 to `main`. Nothing is benchmarked in CI; the workflow runs
 `node automation/site.mjs`, which copies every `results/<run>/` directory to
-`runs/<run>/` on the site, generates `runs/index.html`, and uses the newest
-clean run's `report.html` as the site's front page (runs traced with
-`--strace-fsync` carry inflated timings, so they are listed but never
-promoted). So the loop is: run the benchmark, commit the new
-`results/<run>/` directory, push.
+`runs/<run>/` on the site, generates `runs/index.html` with cross-browser
+comparisons and experiments listed separately, and uses the newest
+cross-browser comparison's `report.html` as the site's front page.
+Experiments (single-browser runs, local builds, traced runs, anything with
+a `--note`) are never promoted. So the loop is: run the benchmark, commit
+the new `results/<run>/` directory, push.
 
 What to commit from a run directory: `chrome.summary.md`,
 `firefox.summary.md`, `summary.md` and `report.html`. The per-browser JSON,

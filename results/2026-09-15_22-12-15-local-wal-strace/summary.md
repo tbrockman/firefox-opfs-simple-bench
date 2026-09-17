@@ -4,7 +4,10 @@ Host: AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-g
 Config: preset=quick+overrides, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=1, M=200  
 Browsers: Firefox 158  
 Profiles on: ext4 (/)  
-Traced with strace: fsync counts below; ptrace overhead applies to those calls only.  
+Single-browser run (firefox): no cross-browser comparison.  
+Local build: Firefox 158 from /home/theo/dev/firefox/obj-opt/dist/bin/firefox.  
+Note: Local mozilla-central build 8d76a2ba4c (Firefox 158.0a1, plain opt build) with patches/0001-opfs-metadata-wal.patch (PRAGMA journal_mode = WAL)  
+Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.  
 Date: 2026-09-16T05:12:17.762Z
 
 ## Per-file cost (median run, mean time per call)

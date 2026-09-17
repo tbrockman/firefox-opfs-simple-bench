@@ -52,6 +52,8 @@ const USAGE = `Usage: node run.mjs [options]
                               (repeatable; true/false/numbers are typed, anything else is a string)
   --out DIR                   where run directories are created (default: ../results)
   --label NAME                suffix for the run directory name
+  --note TEXT                 free-text note stored with the run and shown in the report and the
+                              site listing (say which patch a local build carries, for instance)
   --profiles-dir DIR          where throwaway profiles are created (default: ./.profiles;
                               keep it on a real disk, not tmpfs, so flush() costs are real)
   --keep-profiles             do not delete the throwaway profiles afterwards
@@ -112,6 +114,7 @@ const opts = {
   firefoxPath: args['firefox-path'] ? path.resolve(String(args['firefox-path'])) : undefined,
   out: path.resolve(String(args.out || path.join(SITE, 'results'))),
   label: args.label ? String(args.label).replace(/[^\w.-]+/g, '-') : '',
+  note: args.note ? String(args.note) : '',
   profilesDir: path.resolve(String(args['profiles-dir'] || path.join(HERE, '.profiles'))),
   keepProfiles: args['keep-profiles'] === true,
   timeoutMin: Number(args['timeout-min'] || 120),
@@ -243,6 +246,15 @@ async function launchBrowser(name, profileDir, log, runDir) {
   });
 }
 
+// Where a browser binary came from, so reports can flag local builds.
+function classifyExecutable(p) {
+  if (!p) return 'unknown';
+  const s = String(p).replace(/\\/g, '/');
+  if (/\/\.cache\/puppeteer\//.test(s)) return 'puppeteer';
+  if (/^\/(usr|opt|snap|Applications)\//.test(s) || /Program Files/.test(s)) return 'system';
+  return 'custom';
+}
+
 function hostInfo() {
   const cpus = os.cpus();
   return {
@@ -346,6 +358,8 @@ async function runBrowser(name, runDir, serverUrl) {
       browser: name,
       version: record.version,
       executablePath: lastRealExecutable ?? browser.process()?.spawnfile ?? null,
+      executableSource: classifyExecutable(lastRealExecutable ?? browser.process()?.spawnfile),
+      note: opts.note || undefined,
       launchArgs: lastLaunchArgs,
       firefoxPrefs: name === 'firefox' && Object.keys(opts.firefoxPrefs).length ? opts.firefoxPrefs : undefined,
       strace: null,

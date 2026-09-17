@@ -4,6 +4,9 @@ Host: AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-g
 Config: preset=quick, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=3, M=200  
 Browsers: Firefox 158  
 Profiles on: ext4 (/)  
+Single-browser run (firefox): no cross-browser comparison.  
+Local build: Firefox 158 from /home/theo/dev/firefox/obj-opt/dist/bin/firefox.  
+Note: Local mozilla-central build 8d76a2ba4c (Firefox 158.0a1, plain opt build), unpatched baseline  
 Date: 2026-09-16T05:08:22.753Z
 
 ## Per-call write cost (median run, mean time per call)

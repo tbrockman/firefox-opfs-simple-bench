@@ -39,10 +39,10 @@ cd ~/dev/firefox && export MOZCONFIG=~/dev/firefox-mozconfig
 ./mach --no-interactive bootstrap --application-choice browser --no-system-changes
 ./mach --no-interactive build                      # ~14 min on a Ryzen 7 7800X3D
 cd <this repo>/automation
-node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox --label local-baseline
+node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox --label local-baseline --note 'local build, unpatched'
 cd ~/dev/firefox && git apply <this repo>/patches/0001-opfs-metadata-wal.patch && ./mach build   # incremental: seconds
 cd <this repo>/automation
-node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox --label local-wal
+node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox --label local-wal --note 'local build with patches/0001-opfs-metadata-wal.patch'
 node run.mjs --preset quick --browsers firefox --firefox-path ~/dev/firefox/obj-opt/dist/bin/firefox --workloads new-file --m 200 --runs 1 --strace-fsync --label local-wal-strace
 ```
 

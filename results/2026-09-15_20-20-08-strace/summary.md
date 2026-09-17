@@ -4,7 +4,7 @@ Host: AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-g
 Config: preset=quick, N=2000, S=4096 B, chunks=64 KiB / 1 MiB, R=3, M=200  
 Browsers: Chrome 152, Firefox 155  
 Profiles on: ext4 (/)  
-Traced with strace: fsync counts below; ptrace overhead applies to those calls only.  
+Traced with strace: durability syscalls are counted below; ptrace overhead applies to those calls only.  
 Date: 2026-09-16T03:20:09.457Z
 
 ## Per-call write cost (median run, mean time per call)

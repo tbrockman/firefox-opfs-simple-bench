@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OPFS sync write benchmark 2026-09-16</title>
 <meta name="opfs-bench-traced" content="false">
+<meta name="opfs-bench-browsers" content="chrome,firefox">
+<meta name="opfs-bench-custom-build" content="false">
+<meta name="opfs-bench-note" content="">
 <style>
 :root {
   color-scheme: light dark;
@@ -28,6 +31,8 @@ p { margin: 0 0 8px; }
 .muted { color: var(--muted); }
 .sub { color: var(--ink-2); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+.notice { border-left: 4px solid var(--series-firefox); background: var(--surface); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 12px 0; }
+.notice ul { margin: 6px 0 0; padding-left: 18px; } .notice li { margin: 2px 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 8px; color: var(--ink-2); }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; background: var(--swatch); }
 .chart-wrap { overflow-x: auto; }
@@ -60,6 +65,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
   <h1>OPFS sync write benchmark</h1>
   <p class="sub">2026-09-16T03:59:10.756Z · AMD Ryzen 7 7800X3D 8-Core Processor (16 threads), 65 GB, linux 7.0.0-31-generic x64</p>
   <p class="sub">Config: preset=full, N=20000, S=4096 B, chunks=64 KiB / 1 MiB, R=5, M=2000 · Profiles on: ext4 (/)</p>
+  
   
 
   <section class="card">
